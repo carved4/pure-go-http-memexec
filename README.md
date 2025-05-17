@@ -10,6 +10,7 @@ A lightweight, memory-safe Windows PE file execution tool that downloads and exe
 - **TLS Callback Support**: Properly handles TLS callbacks in PE files
 - **Simple API**: Single command to download and execute payloads
 
+[find binject debug here](https://github.com/Binject/debug)
 ## How It Works
 
 go http memexec uses a sophisticated reflective PE loading technique to run executables in memory:
