@@ -1,89 +1,67 @@
 package gorunpe
 
 import (
-	"encoding/binary"
-	"fmt"
+	"unsafe"
 
-	"gohttpmem/pkg/constants"
 	"github.com/Binject/debug/pe"
 )
 
+// ApplyRelocations applies base relocations in-place using unsafe pointer arithmetic
+// This version uses direct memory access for speed and inlines relocation types.
 func ApplyRelocations(peFile *pe.File, imageData []byte, oldBase, newBase uint64) error {
-	// Find relocation directory
-	var relocDir *pe.DataDirectory
-
+	// Locate the base relocation directory
+	var dirEntry *pe.DataDirectory
 	switch oh := peFile.OptionalHeader.(type) {
 	case *pe.OptionalHeader32:
-		if len(oh.DataDirectory) > constants.IMAGE_DIRECTORY_ENTRY_BASERELOC {
-			relocDir = &oh.DataDirectory[constants.IMAGE_DIRECTORY_ENTRY_BASERELOC]
+		if n := len(oh.DataDirectory); n > pe.IMAGE_DIRECTORY_ENTRY_BASERELOC {
+			dirEntry = &oh.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_BASERELOC]
 		}
 	case *pe.OptionalHeader64:
-		if len(oh.DataDirectory) > constants.IMAGE_DIRECTORY_ENTRY_BASERELOC {
-			relocDir = &oh.DataDirectory[constants.IMAGE_DIRECTORY_ENTRY_BASERELOC]
+		if n := len(oh.DataDirectory); n > pe.IMAGE_DIRECTORY_ENTRY_BASERELOC {
+			dirEntry = &oh.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_BASERELOC]
 		}
+	default:
+		return nil // unsupported header or no reloc
+	}
+	if dirEntry == nil || dirEntry.VirtualAddress == 0 || dirEntry.Size < 8 {
+		return nil // nothing to do
 	}
 
-	if relocDir == nil || relocDir.VirtualAddress == 0 || relocDir.Size == 0 {
-		return nil // No relocations
-	}
+	start := int(dirEntry.VirtualAddress)
+	size := int(dirEntry.Size)
+	end := start + size
+	buf := imageData
 
-	// Track processed size and validate relocation directory
-	rva := relocDir.VirtualAddress
-	size := relocDir.Size
-	endRVA := rva + size
-
-	if endRVA > uint32(len(imageData)) {
-		return fmt.Errorf("relocation directory extends beyond image boundaries")
-	}
-
-	// Process relocation blocks
-	for processedSize := uint32(0); processedSize < size; {
-		// Get relocation block
-		blockRVA := rva + processedSize
-
-		// Read the block header as two 32-bit values instead of one 64-bit value
-		pageRVA := binary.LittleEndian.Uint32(imageData[blockRVA : blockRVA+4])
-		blockSize := binary.LittleEndian.Uint32(imageData[blockRVA+4 : blockRVA+8])
-
-		if blockSize == 0 {
-			break // End of relocation directory
+	// Iterate each relocation block
+	for pos := start; pos < end; {
+		pageRVA := *(*uint32)(unsafe.Pointer(&buf[pos]))
+		blockSize := *(*uint32)(unsafe.Pointer(&buf[pos+4]))
+		if blockSize < 8 {
+			break
 		}
+		entries := (blockSize - 8) / 2
 
-		if blockSize < 8 || blockRVA+blockSize > endRVA {
-			return fmt.Errorf("invalid relocation block: size %d at RVA 0x%X", blockSize, blockRVA)
-		}
+		// Process each entry
+		head := pos + 8
+		for i := uint32(0); i < entries; i++ {
+			off := head + int(i*2)
+			entry := *(*uint16)(unsafe.Pointer(&buf[off]))
+			typ := entry >> 12
+			relOff := uint32(entry & 0x0FFF)
+			loc := int(pageRVA + relOff)
+			ptr := unsafe.Pointer(&buf[loc])
 
-		entriesCount := (blockSize - 8) / 2 // Each entry is 2 bytes
-		for i := uint32(0); i < entriesCount; i++ {
-			entryOffset := blockRVA + 8 + i*2
-			entry := binary.LittleEndian.Uint16(imageData[entryOffset : entryOffset+2])
-
-			type_val := entry >> 12
-			offset := uint32(entry & 0x0FFF)
-
-			relocRVA := pageRVA + offset
-
-			// Apply relocation based on type
-			switch type_val {
-			case constants.IMAGE_REL_BASED_HIGHLOW: // 32-bit relocation
-				if relocRVA+4 > uint32(len(imageData)) {
-					return fmt.Errorf("32-bit relocation at RVA 0x%X extends beyond image boundaries", relocRVA)
-				}
-				addr := binary.LittleEndian.Uint32(imageData[relocRVA : relocRVA+4])
-				addr = (addr - uint32(oldBase)) + uint32(newBase)
-				binary.LittleEndian.PutUint32(imageData[relocRVA:relocRVA+4], addr)
-			case constants.IMAGE_REL_BASED_DIR64: // 64-bit relocation
-				if relocRVA+8 > uint32(len(imageData)) {
-					return fmt.Errorf("64-bit relocation at RVA 0x%X extends beyond image boundaries", relocRVA)
-				}
-				addr := binary.LittleEndian.Uint64(imageData[relocRVA : relocRVA+8])
-				addr = (addr - oldBase) + newBase
-				binary.LittleEndian.PutUint64(imageData[relocRVA:relocRVA+8], addr)
+			switch typ {
+			case pe.IMAGE_REL_BASED_HIGHLOW: // 3
+				orig := *(*uint32)(ptr)
+				*(*uint32)(ptr) = (orig - uint32(oldBase)) + uint32(newBase)
+			case pe.IMAGE_REL_BASED_DIR64: // 10
+				orig64 := *(*uint64)(ptr)
+				*(*uint64)(ptr) = (orig64 - oldBase) + newBase
 			}
 		}
 
-		processedSize += blockSize
+		pos += int(blockSize)
 	}
-
 	return nil
 }

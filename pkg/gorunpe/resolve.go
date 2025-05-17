@@ -1,174 +1,122 @@
 package gorunpe
 
 import (
-	"encoding/binary"
+	"strconv"
+	"syscall"
+	"unsafe"
 	"fmt"
-
-	"gohttpmem/pkg/constants"
 	"github.com/Binject/debug/pe"
-	"golang.org/x/sys/windows"
 )
 
+// ResolveImports patches the import address table in-place using direct memory access.
+// This version is optimized for AMD64 and unifies 32/64-bit handling with minimal overhead.
 func ResolveImports(peFile *pe.File, imageData []byte) error {
-	// Find import directory
-	var importDir *pe.DataDirectory
-
+	// Locate import directory
+	var dir *pe.DataDirectory
 	switch oh := peFile.OptionalHeader.(type) {
-	case *pe.OptionalHeader32:
-		if len(oh.DataDirectory) > constants.IMAGE_DIRECTORY_ENTRY_IMPORT {
-			importDir = &oh.DataDirectory[constants.IMAGE_DIRECTORY_ENTRY_IMPORT]
-		}
 	case *pe.OptionalHeader64:
-		if len(oh.DataDirectory) > constants.IMAGE_DIRECTORY_ENTRY_IMPORT {
-			importDir = &oh.DataDirectory[constants.IMAGE_DIRECTORY_ENTRY_IMPORT]
+		if len(oh.DataDirectory) > pe.IMAGE_DIRECTORY_ENTRY_IMPORT {
+			dir = &oh.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_IMPORT]
+		}
+	case *pe.OptionalHeader32:
+		if len(oh.DataDirectory) > pe.IMAGE_DIRECTORY_ENTRY_IMPORT {
+			dir = &oh.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_IMPORT]
 		}
 	}
-
-	if importDir == nil || importDir.VirtualAddress == 0 || importDir.Size == 0 {
-		return nil // No imports
+	if dir == nil || dir.VirtualAddress == 0 || dir.Size < 20 {
+		return nil // no imports
 	}
 
-	// Get import descriptors using the RVA
-	rva := importDir.VirtualAddress
-	if rva >= uint32(len(imageData)) {
-		return fmt.Errorf("import directory RVA outside image")
+	// Base pointer to the start of imageData
+	base := uintptr(unsafe.Pointer(&imageData[0]))
+	start := int(dir.VirtualAddress)
+
+	// Determine pointer size for target machine
+	ptrSize := 8
+	if peFile.Machine != pe.IMAGE_FILE_MACHINE_AMD64 {
+		ptrSize = 4
 	}
 
-	// Process each import descriptor
-	for offset := uint32(0); ; offset += 20 { // Import descriptor is 20 bytes
-		// Read import descriptor fields
-		descriptorRVA := rva + offset
+	// Iterate descriptors (20 bytes each)
+	for off := 0; ; off += 20 {
+		descPtr := unsafe.Pointer(base + uintptr(start+off))
 
-		// Check if we've reached the end (all zeros descriptor)
-		if descriptorRVA+20 > uint32(len(imageData)) {
-			break
-		}
-
-		// Read the Name RVA field (offset 12 in the descriptor)
-		nameRVA := binary.LittleEndian.Uint32(imageData[descriptorRVA+12 : descriptorRVA+16])
+		// Name RVA at offset 12
+		nameRVA := *(*uint32)(unsafe.Pointer(uintptr(descPtr) + 12))
 		if nameRVA == 0 {
-			break // End of import descriptors
+			break // end of import descriptors
 		}
 
-		// Read the First Thunk RVA (IAT) field (offset 16 in the descriptor)
-		firstThunkRVA := binary.LittleEndian.Uint32(imageData[descriptorRVA+16 : descriptorRVA+20])
-
-		// Read the Original First Thunk RVA (ILT) field (offset 0 in the descriptor)
-		originalFirstThunkRVA := binary.LittleEndian.Uint32(imageData[descriptorRVA : descriptorRVA+4])
-
-		// Get DLL name
-		if nameRVA >= uint32(len(imageData)) {
-			return fmt.Errorf("DLL name RVA outside image")
-		}
-
-		dllName := ReadNullTerminatedString(imageData, nameRVA)
-		if dllName == "" {
-			return fmt.Errorf("empty DLL name at RVA 0x%X", nameRVA)
-		}
-
-		// Load the DLL
-		dll, err := windows.LoadLibrary(dllName)
-		if err != nil {
-			return fmt.Errorf("failed to load library %s: %w", dllName, err)
-		}
-
-		// Process imports from this DLL
-		thunkRVA := originalFirstThunkRVA
+		// IAT and ILT RVAs
+		firstThunk := *(*uint32)(unsafe.Pointer(uintptr(descPtr) + 16))
+		origThunk := *(*uint32)(unsafe.Pointer(descPtr))
+		thunkRVA := origThunk
 		if thunkRVA == 0 {
-			thunkRVA = firstThunkRVA // If no ILT, use IAT
+			thunkRVA = firstThunk
 		}
 
-		for thunkOffset := uint32(0); ; thunkOffset += PtrSize(peFile.Machine) {
-			thunkEntryRVA := thunkRVA + thunkOffset
-			iatEntryRVA := firstThunkRVA + thunkOffset
+		// Read DLL name
+		dllData := (*[1 << 20]byte)(unsafe.Pointer(base + uintptr(nameRVA))) // assume name <1MB
+		var i int
+		for dllData[i] != 0 {
+			i++
+		}
+		dllName := string(dllData[:i])
 
-			if thunkEntryRVA >= uint32(len(imageData)) || iatEntryRVA >= uint32(len(imageData)) {
-				break // Out of bounds
+		// Load DLL once per descriptor
+		hMod, err := syscall.LoadLibrary(dllName)
+		if err != nil {
+			return fmt.Errorf("LoadLibrary %s failed: %w", dllName, err)
+		}
+
+		// Iterate each thunk entry
+		for j := 0; ; j += ptrSize {
+			tEntryRVA := thunkRVA + uint32(j)
+			iatEntryRVA := firstThunk + uint32(j)
+
+			// Bounds check
+			if int(tEntryRVA)+ptrSize > len(imageData) {
+				break
 			}
 
-			// Read the thunk value
-			var ordinal uint64
-			var procRVA uint32
-
-			if peFile.Machine == constants.IMAGE_FILE_MACHINE_AMD64 {
-				ordinal = binary.LittleEndian.Uint64(imageData[thunkEntryRVA : thunkEntryRVA+8])
-				if ordinal == 0 {
-					break // End of imports for this DLL
-				}
+			// Read thunk
+			var thunkVal uint64
+			if ptrSize == 8 {
+				thunkVal = *(*uint64)(unsafe.Pointer(base + uintptr(tEntryRVA)))
 			} else {
-				ord32 := binary.LittleEndian.Uint32(imageData[thunkEntryRVA : thunkEntryRVA+4])
-				if ord32 == 0 {
-					break // End of imports for this DLL
-				}
-				ordinal = uint64(ord32)
+				thunkVal = uint64(*(*uint32)(unsafe.Pointer(base + uintptr(tEntryRVA))))
+			}
+			if thunkVal == 0 {
+				break // end of imports for this DLL
 			}
 
+			// Resolve by ordinal if high bit set
 			var procAddr uintptr
-
-			// Check if import by ordinal
-			if (peFile.Machine == constants.IMAGE_FILE_MACHINE_AMD64 && (ordinal&0x8000000000000000) != 0) ||
-				(peFile.Machine != constants.IMAGE_FILE_MACHINE_AMD64 && (ordinal&0x80000000) != 0) {
-
-				// Import by ordinal
-				ord := uint16(ordinal & 0xFFFF)
-				procAddr, err = windows.GetProcAddress(dll, "#"+fmt.Sprint(ord))
-				if err != nil {
-					return fmt.Errorf("failed to get proc address for ordinal %d in %s: %w", ord, dllName, err)
-				}
+			if (ptrSize == 8 && (thunkVal>>63) != 0) || (ptrSize == 4 && (thunkVal>>31) != 0) {
+				ord := uint16(thunkVal & 0xFFFF)
+				procAddr, err = syscall.GetProcAddress(hMod, "#"+strconv.Itoa(int(ord)))
 			} else {
-				// Import by name
-				if peFile.Machine == constants.IMAGE_FILE_MACHINE_AMD64 {
-					procRVA = uint32(ordinal & 0xFFFFFFFF)
-				} else {
-					procRVA = uint32(ordinal)
+				// Name RVA + skip hint (2 bytes)
+				nameOff := uint32(thunkVal&0xFFFFFFFF) + 2
+				nameData := (*[1 << 20]byte)(unsafe.Pointer(base + uintptr(nameOff)))
+				var k int
+				for nameData[k] != 0 {
+					k++
 				}
-
-				// Read the hint/name table entry
-				if procRVA+2 >= uint32(len(imageData)) {
-					return fmt.Errorf("proc name RVA outside image")
-				}
-
-				// Skip the hint (2 bytes)
-				procNameRVA := procRVA + 2
-				procName := ReadNullTerminatedString(imageData, procNameRVA)
-
-				procAddr, err = windows.GetProcAddress(dll, procName)
-				if err != nil {
-					return fmt.Errorf("failed to get proc address for %s in %s: %w", procName, dllName, err)
-				}
+				procAddr, err = syscall.GetProcAddress(hMod, string(nameData[:k]))
+			}
+			if err != nil {
+				return fmt.Errorf("GetProcAddress failed: %w", err)
 			}
 
-			// Write the resolved address to the IAT
-			if peFile.Machine == constants.IMAGE_FILE_MACHINE_AMD64 {
-				binary.LittleEndian.PutUint64(imageData[iatEntryRVA:iatEntryRVA+8], uint64(procAddr))
+			// Write IAT entry
+			if ptrSize == 8 {
+				*(*uint64)(unsafe.Pointer(base + uintptr(iatEntryRVA))) = uint64(procAddr)
 			} else {
-				binary.LittleEndian.PutUint32(imageData[iatEntryRVA:iatEntryRVA+4], uint32(procAddr))
+				*(*uint32)(unsafe.Pointer(base + uintptr(iatEntryRVA))) = uint32(procAddr)
 			}
 		}
 	}
 
 	return nil
-}
-
-// Helper function to read null-terminated strings from memory
-func ReadNullTerminatedString(data []byte, offset uint32) string {
-	if offset >= uint32(len(data)) {
-		return ""
-	}
-
-	// Find null terminator
-	end := offset
-	for end < uint32(len(data)) && data[end] != 0 {
-		end++
-	}
-
-	return string(data[offset:end])
-}
-
-// Helper function to get pointer size based on machine type
-func PtrSize(machine uint16) uint32 {
-	if machine == constants.IMAGE_FILE_MACHINE_AMD64 {
-		return 8 // 64-bit
-	}
-	return 4 // 32-bit
 }
