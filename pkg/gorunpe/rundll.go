@@ -1,14 +1,15 @@
 // Package runpe provides functionality to execute PE files in memory.
-// This package implements a pure Go reflective PE loader using the Binject/debug/pe package.
+// This package implements a pure Go reflective DLL loader using the Binject/debug/pe package.
 // This package only works on Windows systems.
 // +build windows
-package runpe
+package gorunpe
 
 import (
 	"bytes"
 	"fmt"
 	"unsafe"
 	
+	"gohttpmem/pkg/constants"
 	"github.com/Binject/debug/pe"
 	"golang.org/x/sys/windows"
 	"syscall"
@@ -249,16 +250,20 @@ func LoadDLLInMemory(dllBytes []byte) (handle uintptr, err error) {
 		}
 	}
 
-	// 7. Apply relocations if needed (the DLL might not load at its preferred base address)
+	// 7. Apply relocations if needed
 	newImageBase := uint64(baseAddress)
 	if newImageBase != imageBase {
-		if err := applyRelocations(peFile, dest, imageBase, newImageBase); err != nil {
+		if err := ApplyRelocations(peFile, dest, imageBase, newImageBase); err != nil {
+			// Free allocated memory
+			windows.VirtualFree(baseAddress, 0, windows.MEM_RELEASE)
 			return 0, fmt.Errorf("relocation failed: %w", err)
 		}
 	}
 
-	// 8. Resolve imports for the DLL
-	if err := resolveImports(peFile, dest); err != nil {
+	// 8. Resolve imports
+	if err := ResolveImports(peFile, dest); err != nil {
+		// Free allocated memory
+		windows.VirtualFree(baseAddress, 0, windows.MEM_RELEASE)
 		return 0, fmt.Errorf("import resolution failed: %w", err)
 	}
 
@@ -272,13 +277,15 @@ func LoadDLLInMemory(dllBytes []byte) (handle uintptr, err error) {
 		characteristics := section.Characteristics
 
 		// Determine protection based on section characteristics
-		if characteristics&IMAGE_SCN_MEM_EXECUTE != 0 {
-			if characteristics&IMAGE_SCN_MEM_WRITE != 0 {
+		if characteristics&constants.IMAGE_SCN_MEM_EXECUTE != 0 {
+			if characteristics&constants.IMAGE_SCN_MEM_WRITE != 0 {
+				// Some DLLs rely on PAGE_EXECUTE_WRITECOPY for copy-on-write sections
+				// We map all write+exec to EXECUTE_READWRITE for simplicity
 				protection = windows.PAGE_EXECUTE_READWRITE
 			} else {
 				protection = windows.PAGE_EXECUTE_READ
 			}
-		} else if characteristics&IMAGE_SCN_MEM_WRITE != 0 {
+		} else if characteristics&constants.IMAGE_SCN_MEM_WRITE != 0 {
 			protection = windows.PAGE_READWRITE
 		}
 
@@ -287,7 +294,7 @@ func LoadDLLInMemory(dllBytes []byte) (handle uintptr, err error) {
 		va := baseAddress + uintptr(section.VirtualAddress)
 		size := uintptr(section.VirtualSize)
 		// Round up to page boundary
-		size = ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE
+		size = ((size + constants.PAGE_SIZE - 1) / constants.PAGE_SIZE) * constants.PAGE_SIZE
 
 		err := windows.VirtualProtect(va, size, protection, &oldProtect)
 		if err != nil {
@@ -296,7 +303,9 @@ func LoadDLLInMemory(dllBytes []byte) (handle uintptr, err error) {
 	}
 
 	// 10. Call TLS callbacks if present
-	if err := executeTLSCallbacks(peFile, baseAddress); err != nil {
+	if err := ExecuteTLSCallbacks(peFile, baseAddress); err != nil {
+		// Free allocated memory
+		windows.VirtualFree(baseAddress, 0, windows.MEM_RELEASE)
 		return 0, fmt.Errorf("TLS callback execution failed: %w", err)
 	}
 
@@ -307,8 +316,8 @@ func LoadDLLInMemory(dllBytes []byte) (handle uintptr, err error) {
 		
 		// Call DllMain(hinstDLL, DLL_PROCESS_ATTACH, lpvReserved)
 		// DLL_PROCESS_ATTACH = 1
-		// lpvReserved = NULL (0) for dynamic loading
-		r1, _, errCode := syscall.Syscall(dllMain, 3, baseAddress, DLL_PROCESS_ATTACH, 0)
+		// Use 0 for lpvReserved (static load) rather than a real pointer (dynamic load)
+		r1, _, errCode := syscall.Syscall(dllMain, 3, baseAddress, constants.DLL_PROCESS_ATTACH, 0)
 		
 		// DllMain returns TRUE (non-zero) on success
 		if errCode != 0 {
@@ -488,9 +497,8 @@ func FreeDLLFromMemory(dllBase uintptr, entryPoint uintptr) error {
 	}
 	
 	// If we know the entry point, call DllMain with DLL_PROCESS_DETACH
-	// DLL_PROCESS_DETACH = 0
 	if entryPoint != 0 {
-		syscall.Syscall(entryPoint, 3, dllBase, 0, 0)
+		syscall.Syscall(entryPoint, 3, dllBase, constants.DLL_PROCESS_DETACH, 0)
 		// Ignore result - we're going to free the memory anyway
 	}
 	

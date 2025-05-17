@@ -1,4 +1,4 @@
-module runpe
+module gohttpmem
 
 go 1.23.0
 
