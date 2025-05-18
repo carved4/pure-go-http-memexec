@@ -28,4 +28,8 @@ jobs:
           go build -ldflags="-s -w" -buildmode=c-shared -o testdata\hello.dll testdata\hellodll.go
         
       - name: Run tests
-        run: go test -v gohttpmem/pkg -run "TestExeExecution|TestDllExecution" 
+        shell: cmd
+        run: |
+          set CGO_ENABLED=1
+          set GOOS=windows
+          go test -v gohttpmem/pkg -run "TestExeExecution|TestDllExecution" 
