@@ -26,6 +26,8 @@ jobs:
           go build -o testdata\hello.exe testdata\helloworld.go
           set CGO_ENABLED=1
           go build -ldflags="-s -w" -buildmode=c-shared -o testdata\hello.dll testdata\hellodll.go
+          echo "SHA256 of hello.dll:"
+          certutil -hashfile testdata\hello.dll SHA256
         
       - name: Run tests
         shell: cmd
