@@ -24,18 +24,3 @@ func TestDllFunc() bool {
 // This must be defined for proper exports
 func main() {}
 
-/*
-// REMOVE THIS ENTIRE INIT FUNCTION
-// Reference: https://github.com/golang/go/wiki/WindowsDLLs
-func init() {
-    // When building as a DLL, Windows will call DllMain
-    syscall.NewCallback(func(hinstDLL uintptr, fdwReason uint32, lpvReserved uintptr) uintptr {
-        // DLL_PROCESS_ATTACH = 1
-        if fdwReason == 1 {
-            // DLL loaded successfully
-            fmt.Println("DLL_PROCESS_ATTACH called")
-        }
-        return 1 // success
-    })
-}
-*/ 
