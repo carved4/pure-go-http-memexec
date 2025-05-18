@@ -25,10 +25,6 @@ func TestExeExecution(t *testing.T) {
 	if _, err := os.Stat(exePath); os.IsNotExist(err) {
 		// Try one level up
 		exePath = filepath.Join(pwd, "..", "testdata", "hello.exe")
-		if _, err := os.Stat(exePath); os.IsNotExist(err) {
-			// Try the absolute path directly
-			exePath = filepath.Join("C:", "testdata", "hello.exe")
-		}
 	}
 
 	fmt.Printf("Using EXE path: %s\n", exePath)
@@ -94,6 +90,7 @@ func TestExeExecution(t *testing.T) {
 }
 
 func TestDllExecution(t *testing.T) {
+	t.Logf("--- TestDllExecution attempting to start ---")
 	fmt.Println("=== Starting DLL Execution Test ===")
 	
 	// Get current working directory
@@ -101,15 +98,21 @@ func TestDllExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get working directory: %v", err)
 	}
-	fmt.Printf("Current working directory: %s\n", pwd)
+	t.Logf("Current working directory for DLL test: %s", pwd)
 
-	// Try to find the testdata directory by walking up from the current directory
-	dllPath := filepath.Join(pwd, "..", "testdata", "hello.dll")
+	// Try to find the testdata directory
+	dllPath := filepath.Join(pwd, "testdata", "hello.dll")
+	if _, err := os.Stat(dllPath); os.IsNotExist(err) {
+		// Try one level up if not found in ./testdata
+		dllPath = filepath.Join(pwd, "..", "testdata", "hello.dll")
+	}
+	
 	fmt.Printf("Using DLL path: %s\n", dllPath)
 
 	// Check if the test binary exists
 	_, err = os.Stat(dllPath)
 	if os.IsNotExist(err) {
+		t.Logf("Test DLL not found at path '%s', skipping test.", dllPath)
 		t.Skip("Test DLL not found at path: " + dllPath)
 	}
 
