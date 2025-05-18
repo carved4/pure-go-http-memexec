@@ -34,6 +34,6 @@ jobs:
           set GOOS=windows
           echo "Listing tests in pkg directory:"
           cd pkg
-          go test -list . .
+          go test -list . -tags windows .
           echo "Running tests..."
-          go test -v . -run "TestExeExecution|TestDllExecution" 
+          go test -v -tags windows . -run "TestExeExecution|TestDllExecution" 
