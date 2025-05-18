@@ -35,5 +35,4 @@ jobs:
           cd pkg
           go test -list . -tags windows .
           echo "Running tests..."
-          echo "Attempting to run ONLY TestDllExecution (with pre-built DLL) and verbose build/link output..."
-          go test -x -v -tags windows . -run "^TestDllExecution$" 
+          go test -v -tags windows . -run "TestExeExecution|TestDllExecution" 
