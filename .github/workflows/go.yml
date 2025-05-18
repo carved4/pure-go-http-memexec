@@ -52,6 +52,8 @@ jobs:
 
           set CGO_ENABLED=1
 
+          echo "Listing contents of testdata directory before tests:"
+          dir testdata
         
 
       - name: Run tests
