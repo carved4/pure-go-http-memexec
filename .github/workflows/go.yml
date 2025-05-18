@@ -70,8 +70,10 @@ jobs:
 
           go test -list . -tags windows .
 
-          echo "Running tests..."
+          echo "Running TestExeExecution..."
 
-          echo "Attempting to run TestDllExecution first, then TestExeExecution, with verbose build/link output..."
+          go test -v -tags windows . -run "^TestExeExecution$"
 
-          go test -x -v -tags windows . -run "TestDllExecution|TestExeExecution" 
+          echo "Running TestDllExecution..."
+
+          go test -v -tags windows . -run "^TestDllExecution$" 
