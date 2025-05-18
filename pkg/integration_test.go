@@ -27,7 +27,7 @@ func TestExeExecution(t *testing.T) {
 		exePath = filepath.Join(pwd, "..", "testdata", "hello.exe")
 		if _, err := os.Stat(exePath); os.IsNotExist(err) {
 			// Try the absolute path directly
-			exePath = filepath.Join("/c:/Users/owen/Desktop/github - gohttpmemexec/pure-go-http-memexec/testdata/hello.exe")
+			exePath = filepath.Join("C:", "testdata", "hello.exe")
 		}
 	}
 
