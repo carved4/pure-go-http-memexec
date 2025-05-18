@@ -109,7 +109,7 @@ This tool is designed for legitimate security research, testing, and educational
 
 ## License
 
-[MIT License](LICENSE)
+ [License: BSD-3-Clause](LICENSE)
 
 ## Disclaimer
 
