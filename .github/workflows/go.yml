@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [main, master]
 
-permissions:
-  security-events: write
-
 jobs:
   build-test-windows:
     runs-on: windows-latest
@@ -29,18 +26,6 @@ jobs:
           go build -o testdata\hello.exe testdata\helloworld.go
           set CGO_ENABLED=1
           go build -ldflags="-s -w" -buildmode=c-shared -o testdata\hello.dll testdata\hellodll.go
-          
-      - name: Check Windows Security Settings
-        shell: powershell
-        run: |
-          Write-Host "Checking DEP settings..."
-          Get-ProcessMitigation -System
-          Write-Host "Checking Windows Defender settings..."
-          Get-MpPreference | Select-Object -Property EnableControlledFolderAccess,AttackSurfaceReductionRules_Ids,AttackSurfaceReductionRules_Actions
-          Write-Host "Checking current process privileges..."
-          whoami /priv
-          Write-Host "Checking process mitigation policy..."
-          Get-ProcessMitigation -Name go.exe
         
       - name: Run tests
         shell: cmd
@@ -50,5 +35,5 @@ jobs:
           echo "Listing tests in pkg directory:"
           cd pkg
           go test -list . .
-          echo "Running tests with verbose output..."
-          go test -v . -run "TestExeExecution|TestDllExecution" 2>&1 
+          echo "Running tests..."
+          go test -v . -run "TestExeExecution|TestDllExecution" 
