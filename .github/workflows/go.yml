@@ -1,0 +1,31 @@
+name: Go CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.20'
+      
+      - name: Build test binaries
+        shell: cmd
+        run: |
+          if not exist testdata mkdir testdata
+          set GOOS=windows
+          set GOARCH=amd64
+          go build -o testdata\hello.exe testdata\helloworld.go
+          set CGO_ENABLED=1
+          go build -buildmode=c-shared -o testdata\hello.dll testdata\hellodll.go
+        
+      - name: Run tests
+        run: go test ./... 

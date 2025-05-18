@@ -315,6 +315,21 @@ func CallExportWithNoArgs(handle uintptr, name string) (uintptr, error) {
     
     fmt.Printf("Calling export %s at address %x with 0 arguments\n", name, addr)
     // Use syscall.Syscall with 0 arguments for the actual function
-    r1, _, err := syscall.Syscall(addr, 0, 0, 0, 0)
-    return r1, err
+    r1, _, errno := syscall.Syscall(addr, 0, 0, 0, 0)
+
+    // errno is of type syscall.Errno (uintptr).
+    // A value of 0 typically indicates success from the syscall itself.
+    // If errno is not 0, it might be an actual error or a success code
+    // that Go's syscall layer wraps as a non-nil error object.
+    if errno != 0 { // Check if errno is not numerically zero
+        // If it's not zero, check if it's the specific "success" message.
+        // If it is this message, we treat it as success (return nil error).
+        // Otherwise, it's a real error.
+        if errno.Error() == "The operation completed successfully." {
+            return r1, nil // Success
+        }
+        return r1, errno // Actual error
+    }
+    // If errno was 0, it's success.
+    return r1, nil
 }
