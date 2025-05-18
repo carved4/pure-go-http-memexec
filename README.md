@@ -1,4 +1,5 @@
 # go http memexec
+[![Go CI](https://github.com/carved4/pure-go-http-memexec/actions/workflows/go.yml/badge.svg)](https://github.com/carved4/pure-go-http-memexec/actions/workflows/go.yml)
 
 A lightweight, memory-safe Windows PE file execution tool that downloads and executes payloads without ever touching the disk. Supports both executables and DLLs.
 
