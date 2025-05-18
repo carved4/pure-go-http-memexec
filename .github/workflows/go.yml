@@ -32,4 +32,7 @@ jobs:
         run: |
           set CGO_ENABLED=1
           set GOOS=windows
+          echo "Listing tests in gohttpmem/pkg:"
+          go test -list . ./gohttpmem/pkg
+          echo "Running tests..."
           go test -v gohttpmem/pkg -run "TestExeExecution|TestDllExecution" 
