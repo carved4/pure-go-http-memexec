@@ -25,9 +25,6 @@ jobs:
           set GOARCH=amd64
           go build -o testdata\hello.exe testdata\helloworld.go
           set CGO_ENABLED=1
-          go build -ldflags="-s -w" -buildmode=c-shared -o testdata\hello.dll testdata\hellodll.go
-          echo "SHA256 of hello.dll:"
-          certutil -hashfile testdata\hello.dll SHA256
         
       - name: Run tests
         shell: cmd
@@ -38,5 +35,4 @@ jobs:
           cd pkg
           go test -list . -tags windows .
           echo "Running tests..."
-          echo "Attempting to run ONLY TestDllExecution with verbose build/link output (again)..."
-          go test -x -v -tags windows . -run "^TestDllExecution$" 
+          go test -v -tags windows . -run "TestExeExecution|TestDllExecution" 
