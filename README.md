@@ -106,6 +106,8 @@ This tool is designed for legitimate security research, testing, and educational
 - This project has only been tested on Windows 10
 - This is a rewrite of the original C++-based implementation, now in 100% pure Go
 - The DLL loading functionality allows more flexible in-memory execution without process hollowing
+## Demo Usage For Exe
+https://github.com/user-attachments/assets/d8549b80-574a-4718-8e8f-ee065ad52c40
 
 ## License
 
@@ -114,3 +116,7 @@ This tool is designed for legitimate security research, testing, and educational
 ## Disclaimer
 
 This project is provided for educational and research purposes only. Users are responsible for ensuring compliance with all applicable laws and regulations.
+
+
+
+
