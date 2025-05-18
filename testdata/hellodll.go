@@ -5,7 +5,7 @@ import "C"  // This is critical for CGO exports
 import (
     "fmt"
     "os"
-    "syscall"
+    // "syscall" // No longer needed for a manual DllMain callback
 )
 
 //export TestDllFunc
@@ -14,9 +14,9 @@ func TestDllFunc() bool {
     err := os.WriteFile("dll_worked.txt", []byte("DLL execution successful"), 0644)
     if err != nil {
         // If file writing fails, at least print to console for logs
-        fmt.Println("Failed to write file but DLL execution successful")
+        fmt.Println("Failed to write file from DLL but TestDllFunc was called") // Adjusted message
     } else {
-        fmt.Println("DLL execution successful, file written")
+        fmt.Println("DLL execution successful, file written by TestDllFunc") // Adjusted message
     }
     return true
 }
@@ -24,6 +24,8 @@ func TestDllFunc() bool {
 // This must be defined for proper exports
 func main() {}
 
+/*
+// REMOVE THIS ENTIRE INIT FUNCTION
 // Reference: https://github.com/golang/go/wiki/WindowsDLLs
 func init() {
     // When building as a DLL, Windows will call DllMain
@@ -35,4 +37,5 @@ func init() {
         }
         return 1 // success
     })
-} 
+}
+*/ 
