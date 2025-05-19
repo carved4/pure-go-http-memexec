@@ -1,81 +1,78 @@
 name: Go CI
 
-
-
 on:
-
   push:
-
     branches: [main, master]
-
   pull_request:
-
     branches: [main, master]
-
-
 
 jobs:
-
   build-test-windows:
-
     runs-on: windows-latest
-
     steps:
-
       - uses: actions/checkout@v3
-
       
-
       - name: Set up Go
-
         uses: actions/setup-go@v4
-
         with:
-
           go-version: '1.24.1'
-
       
-
       - name: Build test binaries
-
         shell: cmd
-
         run: |
-
           if not exist testdata mkdir testdata
-
           set GOOS=windows
-
           set GOARCH=amd64
-
           go build -o testdata\hello.exe testdata\helloworld.go
-
           set CGO_ENABLED=1
-
           echo "Listing contents of testdata directory before tests:"
           dir testdata
         
-
-      - name: Run tests
-
+      - name: Create coverage directory
         shell: cmd
+        run: mkdir coverage
 
+      - name: Run tests with coverage
+        shell: cmd
         run: |
-
           set CGO_ENABLED=1
-
           set GOOS=windows
-
           echo "Listing tests in pkg directory:"
-
           cd pkg
-
           go test -list . -tags windows .
+          
+          echo "Running TestExeExecution with coverage..."
+          go test -v -tags windows . -run "^TestExeExecution$" -coverprofile=..\coverage\exe.out
+          if errorlevel 1 exit /b 1
+          
+          echo "Running TestDllExecution with coverage..."
+          go test -v -tags windows . -run "^TestDllExecution$" -coverprofile=..\coverage\dll.out
+          if errorlevel 1 exit /b 1
+          
+          cd ..
+          
+          echo "Checking coverage files..."
+          if not exist coverage\exe.out (
+            echo "Warning: exe.out not found"
+            exit /b 1
+          )
+          if not exist coverage\dll.out (
+            echo "Warning: dll.out not found"
+            exit /b 1
+          )
+          
+          echo "Combining coverage reports..."
+          echo mode: set > coverage\coverage.out
+          type coverage\exe.out | findstr /v "mode: " >> coverage\coverage.out
+          type coverage\dll.out | findstr /v "mode: " >> coverage\coverage.out
+          
+          echo "Generating HTML coverage report..."
+          go tool cover -html=coverage\coverage.out -o coverage\coverage.html
 
-          echo "Running TestExeExecution..."
-
-          go test -v -tags windows . -run "^TestExeExecution$"
-
-          echo "Running TestDllExecution..."
-
-          go test -v -tags windows . -run "^TestDllExecution$" 
+      - name: Upload coverage report
+        if: always()  # Upload even if tests fail
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14 
