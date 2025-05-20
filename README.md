@@ -108,8 +108,8 @@ This tool is designed for legitimate security research, testing, and educational
 - This is a rewrite of the original C++-based implementation, now in 100% pure Go
 - The DLL loading functionality allows more flexible in-memory execution without process hollowing
 
-## Demo Usage of tests (payloads pulled down in this example write a benign indicator of success as a .txt to current dir)
-
+## Demo Usage of tests (payloads pulled down in this example write a benign indicator of success as a .txt to a temp dir)
+https://github.com/user-attachments/assets/fbf58f99-fc74-41af-a96a-5ea01bc0c2aa
 
 ## License
 
@@ -118,7 +118,6 @@ This tool is designed for legitimate security research, testing, and educational
 ## Disclaimer
 
 This project is provided for educational and research purposes only. Users are responsible for ensuring compliance with all applicable laws and regulations.
-
 
 
 
