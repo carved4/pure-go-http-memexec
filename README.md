@@ -1,9 +1,9 @@
-# go http memexec
+# pure go http memexec
 [![Go CI](https://github.com/carved4/pure-go-http-memexec/actions/workflows/go.yml/badge.svg)](https://github.com/carved4/pure-go-http-memexec/actions/workflows/go.yml)
 
 A lightweight, memory-safe Windows PE file execution tool that downloads and executes payloads without ever touching the disk. Supports both executables and DLLs.
 
-(note, the failing tests as of recent are not due to actual failure, DLL execution works perfectly in CI environment, but sometimes marks test as fail due to the nature of reflective DLL loading)
+
 ## Features
 
 - **Zero Disk I/O**: Downloads executables directly to memory and never writes them to disk
@@ -111,6 +111,16 @@ This tool is designed for legitimate security research, testing, and educational
 
 ## Demo Usage of tests (payloads pulled down in this example write a benign indicator of success as a .txt to a temp dir)
 https://github.com/user-attachments/assets/fbf58f99-fc74-41af-a96a-5ea01bc0c2aa
+
+## Contributing
+
+Users are encouraged to submit issues and create forks of this project for their own use or to contribute improvements. When working with this codebase, please note:
+
+- This project uses the BSD-3-Clause license, as does the Binject/debug/pe dependency
+- When creating forks, please maintain the same license terms
+- Contributions via pull requests are welcome
+- Please give proper attribution and do not claim this work as your own
+- When reusing portions of this code in other projects, ensure you comply with the BSD-3-Clause licensing requirements
 
 ## License
 
