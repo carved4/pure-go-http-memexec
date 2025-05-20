@@ -1,51 +1,60 @@
 #!/bin/bash
 set -e  # Exit on error
 
-echo "Building test EXE (DLL should be pre-built and committed)..."
+# Build the test binaries quietly
+echo "Building test binaries..."
+mkdir -p testdata &>/dev/null
+GOOS=windows GOARCH=amd64 go build -o testdata/hello.exe testdata/helloworld.go &>/dev/null
 
-# Create testdata directory if it doesn't exist
-mkdir -p testdata
-
-echo "Building EXE..."
-GOOS=windows GOARCH=amd64 go build -o testdata/hello.exe testdata/helloworld.go
-
-# The following lines for fixing and rebuilding hello.dll are removed:
-# grep -q "syscall" testdata/hellodll.go || sed -i 's/import (/import (\n    "syscall"/' testdata/hellodll.go
-# echo "Building DLL..."
-# GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -ldflags="-s -w" -buildmode=c-shared -o testdata/hello.dll testdata/hellodll.go
-
-# Check the DLL exports if objdump is available (optional)
-if command -v objdump &> /dev/null; then
-    if [ -f "testdata/hello.dll" ]; then
-        echo "DLL exports (for pre-built hello.dll):"
-        objdump -p testdata/hello.dll | grep -A20 "Export Table"
+# Function to run a test and show only the key results
+function run_test_and_show_artifacts() {
+    test_name=$1
+    echo "----------------------------------------------------------------"
+    echo "▶RUNNING $test_name"
+    
+    # Run the test but filter output
+    (cd pkg && CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go test -v . -run "^$test_name\$") > tmp_output.txt 2>&1 || { 
+        echo "test failed :("
+        exit 1
+    }
+    
+    # Extract and show only the important information
+    echo "test passed :)"
+    
+    # Get the temp directory from the test output
+    temp_dir=$(grep -o "Changed working directory to temp dir: .*" tmp_output.txt | tail -1 | cut -d' ' -f7)
+        
+    if [ -n "$temp_dir" ]; then
+        echo "temporary directory: $temp_dir"
+        
+        # Based on the test type, look for specific artifact file
+        if [ "$test_name" == "TestExeExecution" ]; then
+            artifact_file="$temp_dir/it_worked.txt"
+            file_type="EXE"
+        else
+            artifact_file="$temp_dir/dll_worked.txt"
+            file_type="DLL"
+        fi
+        
+        # Show artifact file content if it exists
+        if [ -f "$artifact_file" ]; then
+            echo "📄 $file_type artifact file: $artifact_file"
+            echo "📝 Content: $(cat "$artifact_file")"
+        else
+            echo "artifact file not found: $artifact_file"
+        fi
     else
-        echo "Warning: testdata/hello.dll not found. Skipping DLL export check."
+        echo "could not find temporary directory path"
     fi
-fi
+    echo "----------------------------------------------------------------"
+}
 
-# Create coverage directory
-mkdir -p coverage
+# Run the tests
+run_test_and_show_artifacts "TestExeExecution"
+run_test_and_show_artifacts "TestDllExecution"
 
-# Run tests separately with coverage
-echo "Running TestExeExecution with coverage..."
-(cd pkg && CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go test -v . -run "^TestExeExecution$" -coverprofile=../coverage/exe.out) || exit 1
-
-echo "Running TestDllExecution with coverage..."
-(cd pkg && CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go test -v . -run "^TestDllExecution$" -coverprofile=../coverage/dll.out) || exit 1
-
-# Check if coverage files exist before trying to combine them
-if [ -f "coverage/exe.out" ] && [ -f "coverage/dll.out" ]; then
-    echo "Combining coverage reports..."
-    echo "mode: set" > coverage/coverage.out
-    tail -n +2 -q coverage/exe.out coverage/dll.out >> coverage/coverage.out 2>/dev/null || true
-
-    # Generate HTML coverage report
-    echo "Generating HTML coverage report..."
-    go tool cover -html=coverage/coverage.out -o coverage/coverage.html
-    echo "Coverage report generated at coverage/coverage.html"
-else
-    echo "Warning: Coverage files not found. Skipping coverage report generation."
-fi
+# Clean up
+rm -f tmp_output.txt
 
 echo "All tests completed successfully!"
+echo "The temporary directories were created!"
