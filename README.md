@@ -67,9 +67,15 @@ The project is built entirely in Go:
 ## Build Instructions
 
 ```bash
+# Clone repo 
+git clone https://github.com/carved4/pure-go-http-memexec.git
+
+# Navigate to directory
+cd pure-go-http-memexec
 # Get dependencies
 go mod tidy
 
+cd cmd
 # Build the executable
 go build -ldflags="-s -w" -trimpath -o go-http-memexec.exe
 ```
