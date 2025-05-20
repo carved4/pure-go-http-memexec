@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )	
 
 func TestExeExecution(t *testing.T) {
@@ -48,8 +49,15 @@ func TestExeExecution(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	// 3. Use a fresh temp dir
-	tmpDir := t.TempDir()
+	// 3. Create a persistent temp dir instead of using t.TempDir() which gets auto-deleted
+	timestamp := time.Now().Format("20060102-150405")
+	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("TestExeExecution-%s", timestamp))
+	err = os.MkdirAll(tmpDir, 0755)
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+	fmt.Printf("Created persistent temp dir (will not be auto-deleted): %s\n", tmpDir)
+	
 	origWD, _ := os.Getwd()
 	defer os.Chdir(origWD)
 	os.Chdir(tmpDir)
@@ -129,8 +137,15 @@ func TestDllExecution(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	// 3. Use a fresh temp dir
-	tmpDir := t.TempDir()
+	// 3. Create a persistent temp dir instead of using t.TempDir() which gets auto-deleted
+	timestamp := time.Now().Format("20060102-150405")
+	tmpDir := filepath.Join(os.TempDir(), fmt.Sprintf("TestDllExecution-%s", timestamp))
+	err = os.MkdirAll(tmpDir, 0755)
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+	fmt.Printf("Created persistent temp dir (will not be auto-deleted): %s\n", tmpDir)
+	
 	origWD, _ := os.Getwd()
 	defer os.Chdir(origWD)
 	os.Chdir(tmpDir)
