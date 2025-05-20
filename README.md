@@ -72,10 +72,13 @@ git clone https://github.com/carved4/pure-go-http-memexec.git
 
 # Navigate to directory
 cd pure-go-http-memexec
+
 # Get dependencies
 go mod tidy
 
+# Navigate to folder containing main.go
 cd cmd
+
 # Build the executable
 go build -ldflags="-s -w" -trimpath -o go-http-memexec.exe
 ```
