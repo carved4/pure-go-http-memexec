@@ -5,6 +5,7 @@ import "C"  // This is critical for CGO exports
 import (
     "fmt"
     "os"
+    // "syscall" // No longer needed for a manual DllMain callback
 )
 
 //export TestDllFunc
