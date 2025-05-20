@@ -10,7 +10,7 @@ A lightweight, memory-safe Windows PE file execution tool that downloads and exe
 - **Pure Go Implementation**: 100% Go code with no CGO dependencies (thank you binject/debug you guys are truly the goats)
 - **Memory-Safe Execution**: Implements proper memory protection and relocation
 - **TLS Callback Support**: Properly handles TLS callbacks in PE files
-- **DLL Support**: Can load DLLs in memory and call exported functionsS
+- **DLL Support**: Can load DLLs in memory and call exported functions
 - **Simple API**: Single command to download and execute payloads
 
 [find binject debug here](https://github.com/Binject/debug)
