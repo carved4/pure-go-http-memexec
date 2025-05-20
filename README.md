@@ -53,16 +53,6 @@ go http memexec uses a sophisticated reflective PE loading technique to run exec
 - Fileless payload execution
 - Loading DLLs without registering them in the PEB loader list
 
-## Technical Details
-
-The project is built entirely in Go:
-
-- Uses golang's net/http to stream downloads directly to memory
-- Implements PE parsing using the Binject/debug/pe package
-- Properly handles relocations, import resolution, and TLS callbacks
-- Sets appropriate memory protections for PE sections
-- For EXEs: Executes code directly from memory with no disk I/O
-- For DLLs: Maps the DLL into memory, calls DllMain, and allows calling exported functions
 
 ## Build Instructions
 
