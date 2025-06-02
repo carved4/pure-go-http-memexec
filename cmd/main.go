@@ -19,7 +19,7 @@ import (
 
 const (
 	// Default URL to download from if none provided, configure this before build to point to your payload to avoid passing CLI flags on run
-	defaultDownloadURL = "https://l.station307.com/K3A1jN2qutfzSTEzHwrqQN/pice3x3.png"
+	defaultDownloadURL = ""
 )
 
 
