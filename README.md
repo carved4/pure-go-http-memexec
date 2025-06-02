@@ -138,7 +138,7 @@ The `-image` flag enables extraction and execution of PE files embedded in PNG i
 - PE files are embedded using the included `embedPEpng` tool
 - The embedding uses LSB (Least Significant Bit) steganography
 - The tool automatically detects and extracts the PE file from the PNG
-- After extraction, the PE is executed according to its type (EXE or DLL)
+- After extraction, the PE is executed according to its type (EXE or shellcode)
 
 ### Using the embedPEpng Tool
 
