@@ -27,8 +27,7 @@ go http memexec uses a sophisticated reflective PE loading technique to run exec
 5. Handles TLS callbacks properly
 6. For EXEs: Executes the payload by jumping to its entry point
 7. For DLLs: Calls DllMain with DLL_PROCESS_ATTACH and lets you call exported functions
-8. (in development, working just need to share the embedder) 
-For PNGs: Extracts the embedded donut shellcode from the PNG and runs it as a thread under the same PID
+8. For PNGs: Extracts the embedded donut shellcode from the PNG and runs it as a thread under the same PID
 
 ## Usage
 
