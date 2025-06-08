@@ -6,10 +6,10 @@ package gorunpe
 
 import (
 	"fmt"
-	"syscall"
 	"unsafe"
 
 	"github.com/Binject/debug/pe"
+	"github.com/carved4/go-direct-syscall"
 	"gohttpmem/pkg/constants"
 )
 
@@ -89,8 +89,8 @@ func ExecuteDLLTLSCallbacks(peFile *pe.File, base uintptr) error {
 		
 		// TLS callbacks in DLLs use the same signature as DllMain:
 		// BOOL WINAPI TLSCallback(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
-		// Call the TLS callback with DLL_PROCESS_ATTACH
-		r1, _, err := syscall.Syscall(callbackAddr, 3, 
+		// Call the TLS callback with DLL_PROCESS_ATTACH using go-direct-syscall
+		r1, err := winapi.DirectSyscall("", callbackAddr,
 			base,                              // DLL base address
 			constants.DLL_PROCESS_ATTACH,      // Reason: process attach
 			0)                                 // Reserved: NULL for dynamic loads

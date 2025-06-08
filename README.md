@@ -1,33 +1,38 @@
-# pure go http memexec
+# pure go http memexec (unstable branch)
 [![Go CI](https://github.com/carved4/pure-go-http-memexec/actions/workflows/go.yml/badge.svg)](https://github.com/carved4/pure-go-http-memexec/actions/workflows/go.yml)
 
-A lightweight, memory-safe Windows PE file execution tool that downloads and executes payloads without ever touching the disk. Supports executables, DLLs, shellcode (Donut format), and PE files embedded in PNG images.
+A lightweight, memory-safe Windows PE file execution tool that downloads and executes payloads without ever touching the disk. **This unstable branch uses direct NT syscalls for maximum stealth** - no Windows API imports, no syscall package dependencies. Supports executables, DLLs, shellcode (Donut format), and PE files embedded in PNG images.
 
 
 ## Features
 
 - **Zero Disk I/O**: Downloads executables directly to memory and never writes them to disk
+- **Maximum Stealth**: Uses direct NT syscalls via go-direct-syscall package - no Windows API or syscall imports
 - **Pure Go Implementation**: 100% Go code with no CGO dependencies (thank you binject/debug you guys are truly the goats)
-- **Memory-Safe Execution**: Implements proper memory protection and relocation
-- **TLS Callback Support**: Properly handles TLS callbacks in PE files
-- **DLL Support**: Can load DLLs in memory and call exported functions
+- **Memory-Safe Execution**: Implements proper memory protection and relocation with retry logic
+- **TLS Callback Support**: Properly handles TLS callbacks in PE files with crash protection
+- **DLL Support**: Can load DLLs in memory and call exported functions using direct syscalls
 - **Shellcode Support**: Execute Donut-generated shellcode directly in memory
 - **Steganography Support**: Extract and execute PE files embedded in PNG images
+- **Exception Handling**: Proper SEH registration for performance and stability
 - **Simple API**: Single command to download and execute payloads
 
 [find binject debug here](https://github.com/Binject/debug)
 ## How It Works
 
-go http memexec uses a sophisticated reflective PE loading technique to run executables in memory:
+go http memexec uses a sophisticated reflective PE loading technique with direct NT syscalls for maximum stealth:
 
 1. Downloads a PE file directly to memory using golang's net/http
 2. Parses the PE file structure using the Binject/debug/pe package
-3. Maps the PE file into memory with proper section permissions
-4. Resolves imports and fixes relocations
-5. Handles TLS callbacks properly
-6. For EXEs: Executes the payload by jumping to its entry point
-7. For DLLs: Calls DllMain with DLL_PROCESS_ATTACH and lets you call exported functions
-8. For PNGs: Extracts the embedded donut shellcode from the PNG and runs it as a thread under the same PID
+3. **Maps the PE file into memory using `NtCreateSection` and `NtMapViewOfSection`** (no VirtualAlloc)
+4. **Protects memory sections using `NtProtectVirtualMemory`** (no VirtualProtect)
+5. Resolves imports and fixes relocations
+6. **Handles TLS callbacks with direct function calls and crash protection**
+7. **Registers exception handlers using `RtlAddFunctionTable` via DirectSyscall**
+8. For EXEs: **Executes using `NtCreateThreadEx` and `NtWaitForSingleObject`**
+9. For DLLs: **Calls DllMain using DirectSyscall** and lets you call exported functions
+10. For PNGs: Extracts embedded payloads and executes using the same direct syscall methods
+11. **All memory operations use direct NT syscalls with retry logic for reliability**
 
 ## Usage
 
@@ -89,23 +94,23 @@ go build -ldflags="-s -w" -trimpath -o go-http-memexec.exe
 
 ## DLL Loading API
 
-The package provides the following functions for DLL handling:
+The package provides the following functions for DLL handling (using direct NT syscalls):
 
 ```go
-// Load a DLL into memory
-handle, err := runpe.LoadDLLInMemory(dllBytes)
+// Load a DLL into memory (uses NtAllocateVirtualMemory, NtProtectVirtualMemory)
+handle, err := gorundll.LoadDLLInMemory(dllBytes)
 
 // Get address of an exported function by name
-procAddr, err := runpe.GetProcAddressFromMemoryDLL(handle, "ExportedFunctionName")
+procAddr, err := gorundll.GetProcAddressFromMemoryDLL(handle, "ExportedFunctionName")
 
 // Get address of an exported function by ordinal
-procAddr, err := runpe.GetProcAddressByOrdinalFromMemoryDLL(handle, 5) // Ordinal 5
+procAddr, err := gorundll.GetProcAddressByOrdinalFromMemoryDLL(handle, 5) // Ordinal 5
 
-// Call the function
-syscall.Syscall(procAddr, numArgs, arg1, arg2, arg3)
+// Call the function using DirectSyscall (no syscall package needed)
+result, err := winapi.DirectSyscall("", procAddr, arg1, arg2, arg3)
 
-// Free the DLL when done
-err = runpe.FreeDLLFromMemory(handle, 0)
+// Free the DLL when done (uses NtFreeVirtualMemory)
+err = gorundll.FreeDLLFromMemory(handle)
 ```
 
 ## Security Considerations
@@ -114,12 +119,18 @@ This tool is designed for legitimate security research, testing, and educational
 
 ## Requirements
 
-- Windows operating system
+- Windows operating system (tested on Windows 10)
 - Go 1.20 or later
+- **Dependencies**: `github.com/carved4/go-direct-syscall` for direct NT syscall access
+- **No Windows API dependencies**: This branch avoids all high-level Windows API imports for maximum stealth
 
 ## Notes
+- **Unstable Branch**: This branch uses direct NT syscalls for maximum stealth and may have different stability characteristics
+- **No Windows API**: All operations use `NtCreateSection`, `NtMapViewOfSection`, `NtProtectVirtualMemory`, `NtCreateThreadEx`, etc.
+- **No syscall package**: Uses `github.com/carved4/go-direct-syscall` instead of Go's syscall package
+- **Enhanced Error Handling**: Includes retry logic for memory conflicts and comprehensive crash protection
 - This project has only been tested on Windows 10
-- This is a rewrite of the original C++-based implementation, now in 100% pure Go
+- This is a rewrite of the original C++-based implementation, now in 100% pure Go with direct syscalls
 - The DLL loading functionality allows more flexible in-memory execution without process hollowing
 
 ## Shellcode Support

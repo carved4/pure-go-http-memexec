@@ -3,10 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"gohttpmem/pkg/embed"
 	"os"
-	"pngpe/pkg/embed"
 )
-
 
 func main() {
 	var (
@@ -14,7 +13,7 @@ func main() {
 		pePath    = flag.String("pe", "", "PE file to embed")
 		output    = flag.String("o", "", "Output PNG file")
 	)
-	
+
 	flag.Parse()
 
 	if *imagePath == "" || *pePath == "" || *output == "" {
@@ -29,12 +28,11 @@ func main() {
 	}
 
 	fmt.Printf("Embedding %s into %s...\n", *pePath, *imagePath)
-	
+
 	if err := embed.EmbedPE(*imagePath, *pePath, *output); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Printf("Successfully created %s with embedded PE\n", *output)
 }
-

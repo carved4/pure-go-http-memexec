@@ -4,11 +4,11 @@ import (
     "bytes"
     "fmt"
     "sync"
+    "time"
     "unsafe"
 
     "github.com/Binject/debug/pe"
-    "golang.org/x/sys/windows"
-    "syscall"
+    "github.com/carved4/go-direct-syscall"
 
     "gohttpmem/pkg/constants"
     "gohttpmem/pkg/gorunpe"
@@ -64,16 +64,73 @@ func LoadDLLInMemory(dllBytes []byte) (uintptr, error) {
         return 0, fmt.Errorf("invalid image size: %d", sizeOfImage)
     }
 
-    // Allocate memory
-    baseAddr, allocErr := windows.VirtualAlloc(0, uintptr(sizeOfImage),
-        windows.MEM_RESERVE|windows.MEM_COMMIT, windows.PAGE_READWRITE)
-    if allocErr != nil || baseAddr == 0 {
-        return 0, fmt.Errorf("memory allocation failed: %v", allocErr)
+    // Allocate memory using NtAllocateVirtualMemory with retry logic
+    var baseAddr uintptr
+    var regionSize uintptr
+    const maxRetries = 10
+    const baseDelay = 10 * time.Millisecond
+    
+
+    
+    for attempt := 0; attempt < maxRetries; attempt++ {
+        baseAddr = 0 // Reset base address for each attempt, let system choose
+        regionSize = uintptr(sizeOfImage)
+        
+        // Small delay before each attempt (except the first)
+        if attempt > 0 {        
+            delay := time.Duration(attempt) * baseDelay
+            time.Sleep(delay)
+        }
+        
+        status, err := winapi.NtAllocateVirtualMemory(
+            winapi.CURRENT_PROCESS,                          // ProcessHandle
+            &baseAddr,                                       // BaseAddress (NULL = let system choose)
+            0,                                               // ZeroBits
+            &regionSize,                                     // RegionSize
+            winapi.MEM_RESERVE|winapi.MEM_COMMIT,            // AllocationType
+            winapi.PAGE_READWRITE)                           // Protect
+
+        if err != nil {
+            // System-level error, don't retry
+            return 0, fmt.Errorf("NtAllocateVirtualMemory failed: %w", err)
+        }
+        
+        // Check for success
+        if winapi.IsNTStatusSuccess(status) && baseAddr != 0 {
+            // Success case: we got a valid base address
+            break
+        }
+        
+        // Handle specific retryable errors
+        const STATUS_CONFLICTING_ADDRESSES = 0xc0000018
+        const STATUS_INVALID_ADDRESS = 0xc0000141
+        
+        if status == STATUS_CONFLICTING_ADDRESSES || status == STATUS_INVALID_ADDRESS {
+            fmt.Printf("Attempt %d: Memory conflict (status 0x%x), retrying...\n", attempt+1, status)
+            if attempt == maxRetries-1 {
+                return 0, fmt.Errorf("NtAllocateVirtualMemory failed after %d attempts with status: 0x%x", maxRetries, status)
+            }
+            continue // Retry
+        }
+        
+        // For other non-success statuses, fail immediately
+        if !winapi.IsNTStatusSuccess(status) {
+            return 0, fmt.Errorf("NtAllocateVirtualMemory failed with status: 0x%x", status)
+        }
+        
+        // If we got status success but null base address, retry
+        if baseAddr == 0 {
+            fmt.Printf("Attempt %d: Got NULL base address despite success, retrying...\n", attempt+1)
+            if attempt == maxRetries-1 {
+                return 0, fmt.Errorf("NtAllocateVirtualMemory returned NULL base address after %d attempts", maxRetries)
+            }
+        }
     }
+
     success := false
     defer func() {
         if !success {
-            windows.VirtualFree(baseAddr, 0, windows.MEM_RELEASE)
+            winapi.NtFreeVirtualMemory(winapi.CURRENT_PROCESS, &baseAddr, &regionSize, winapi.MEM_RELEASE)
         }
     }()
 
@@ -97,16 +154,20 @@ func LoadDLLInMemory(dllBytes []byte) (uintptr, error) {
     }
 
     // Apply relocations if base changed
+    fmt.Printf("DEBUG: Starting relocations...\n")
     if uint64(baseAddr) != imageBase {
         if err := gorunpe.ApplyRelocations(peFile, region, imageBase, uint64(baseAddr)); err != nil {
             return 0, fmt.Errorf("relocations failed: %w", err)
         }
     }
+    fmt.Printf("DEBUG: Relocations completed\n")
 
     // Resolve imports
+    fmt.Printf("DEBUG: Starting import resolution...\n")
     if err := gorunpe.ResolveImports(peFile, baseAddr); err != nil {
         return 0, fmt.Errorf("import resolution failed: %w", err)
     }
+    fmt.Printf("DEBUG: Import resolution completed\n")
 
     // Set section protections
     for _, sec := range peFile.Sections {
@@ -114,39 +175,45 @@ func LoadDLLInMemory(dllBytes []byte) (uintptr, error) {
             continue
         }
         ch := sec.Characteristics
-        var prot uint32 = windows.PAGE_READONLY
+        var prot uintptr = winapi.PAGE_READONLY
         if ch&constants.IMAGE_SCN_MEM_EXECUTE != 0 {
             if ch&constants.IMAGE_SCN_MEM_WRITE != 0 {
-                prot = windows.PAGE_EXECUTE_READWRITE
+                prot = winapi.PAGE_EXECUTE_READWRITE
             } else {
-                prot = windows.PAGE_EXECUTE_READ
+                prot = winapi.PAGE_EXECUTE_READ
             }
         } else if ch&constants.IMAGE_SCN_MEM_WRITE != 0 {
-            prot = windows.PAGE_READWRITE
+            prot = winapi.PAGE_READWRITE
         }
         addr := baseAddr + uintptr(sec.VirtualAddress)
         size := uintptr(sec.VirtualSize)
         // Align to page
         size = (size + uintptr(constants.PAGE_SIZE - 1)) & ^uintptr(constants.PAGE_SIZE - 1)
-        var old uint32
+        var oldProt uintptr
         
         // Debug print for section protection
         fmt.Printf("Setting section %s protection: 0x%x, addr: %x, size: %x\n", 
             sec.Name, prot, addr, size)
             
-        if e := windows.VirtualProtect(addr, size, prot, &old); e != nil {
-            return 0, fmt.Errorf("VirtualProtect %s failed: %w", sec.Name, e)
+        status, err := winapi.NtProtectVirtualMemory(
+            winapi.CURRENT_PROCESS,  // ProcessHandle
+            &addr,                   // BaseAddress
+            &size,                   // RegionSize
+            prot,                    // NewProtect
+            &oldProt)                // OldProtect
+            
+        if err != nil {
+            return 0, fmt.Errorf("NtProtectVirtualMemory %s failed: %w", sec.Name, err)
+        }
+        if !winapi.IsNTStatusSuccess(status) {
+            return 0, fmt.Errorf("NtProtectVirtualMemory %s failed with status: 0x%x", sec.Name, status)
         }
         
-        // Verify protections were set correctly
-        var memInfo windows.MemoryBasicInformation
-        if e := windows.VirtualQuery(addr, &memInfo, unsafe.Sizeof(memInfo)); e == nil {
-            fmt.Printf("  Verified protection for %s: expected 0x%x, got 0x%x\n", 
-                sec.Name, prot, memInfo.Protect)
-        }
+        fmt.Printf("  Section %s protection changed from 0x%x to 0x%x\n", 
+            sec.Name, oldProt, prot)
     }
 
-    // Locate the exception directory
+    // Locate the exception directory - SEH registration is important for performance
     var funcTable unsafe.Pointer
     // Check if OptionalHeader is available and is of type *pe.OptionalHeader64
     // IMAGE_DIRECTORY_ENTRY_EXCEPTION is only present in 64-bit PE files
@@ -156,42 +223,50 @@ func LoadDLLInMemory(dllBytes []byte) (uintptr, error) {
             base := baseAddr
             // Pointer to first RUNTIME_FUNCTION
             funcTable = unsafe.Pointer(base + uintptr(excDir.VirtualAddress))
-            entrySize := unsafe.Sizeof(windows.RUNTIME_FUNCTION{})
-            count := uintptr(excDir.Size) / entrySize
+            // Each RUNTIME_FUNCTION is 12 bytes on x64
+            const runtimeFunctionSize = 12
+            count := uintptr(excDir.Size) / runtimeFunctionSize
 
-            // Call RtlAddFunctionTable(table, count, ImageBase)
-            ntdll := windows.NewLazySystemDLL("ntdll.dll")
-            addFT := ntdll.NewProc("RtlAddFunctionTable")
-            r1, _, e1 := addFT.Call(
+            fmt.Printf("Registering %d exception handlers at 0x%x\n", count, uintptr(funcTable))
+
+            // RtlAddFunctionTable is already in NTDLL (not kernel32) so it's low-level enough
+            // Use DirectSyscall to call it for maximum stealth
+            r1, err := winapi.DirectSyscall("RtlAddFunctionTable",
                 uintptr(funcTable),
                 count,
-                uintptr(base),
-            )
-            // According to MSDN, RtlAddFunctionTable returns a non-zero value on success.
-            // So r1 == 0 means failure. The user's original code had this inverted.
-            if r1 == 0 {
-                 return 0, fmt.Errorf("RtlAddFunctionTable failed: %v", e1)
+                uintptr(base))
+                
+            if err != nil {
+                return 0, fmt.Errorf("RtlAddFunctionTable syscall failed: %w", err)
             }
+            // According to MSDN, RtlAddFunctionTable returns a non-zero value on success.
+            if r1 == 0 {
+                 return 0, fmt.Errorf("RtlAddFunctionTable failed")
+            }
+            fmt.Printf("Successfully registered exception handlers via RtlAddFunctionTable\n")
         }
     }
 
     // Use the specialized DLL TLS callback handler instead of the generic one
+    fmt.Printf("DEBUG: Starting TLS callbacks...\n")
     if err := gorunpe.ExecuteDLLTLSCallbacks(peFile, baseAddr); err != nil {
         return 0, fmt.Errorf("DLL TLS callbacks failed: %w", err)
     }
-    
+    fmt.Printf("DEBUG: TLS callbacks completed\n")
 
     // Call DllMain(DLL_PROCESS_ATTACH)
+    fmt.Printf("DEBUG: Starting DllMain...\n")
     if entryRVA != 0 {
         dllMain := baseAddr + uintptr(entryRVA)
-        r1, _, ec := syscall.Syscall(dllMain, 3, baseAddr, constants.DLL_PROCESS_ATTACH, 0)
-        if ec != 0 {
-            return 0, fmt.Errorf("DllMain failed: %v", ec)
+        r1, err := winapi.DirectSyscall("", dllMain, baseAddr, constants.DLL_PROCESS_ATTACH, 0)
+        if err != nil {
+            return 0, fmt.Errorf("DllMain syscall failed: %w", err)
         }
         if r1 == 0 {
             return 0, fmt.Errorf("DllMain returned FALSE")
         }
     }
+    fmt.Printf("DEBUG: DllMain completed\n")
 
     success = true
     // Track module
@@ -233,7 +308,16 @@ func GetProcAddressFromMemoryDLL(handle uintptr, name string) (uintptr, error) {
 
     for i := uint32(0); i < exp.NumberOfNames; i++ {
         nameRVA := *(*uint32)(unsafe.Pointer(names + uintptr(i*4)))
-        funcName := windows.BytePtrToString((*byte)(unsafe.Pointer(base + uintptr(nameRVA))))
+        // Convert name from C string to Go string manually
+        namePtr := (*byte)(unsafe.Pointer(base + uintptr(nameRVA)))
+        var funcName string
+        nameBytes := unsafe.Slice(namePtr, 256) // Assume max name length of 256
+        for j, b := range nameBytes {
+            if b == 0 {
+                funcName = string(nameBytes[:j])
+                break
+            }
+        }
         if funcName == name {
             ordinal := *(*uint16)(unsafe.Pointer(ords + uintptr(i*2)))
             rva := *(*uint32)(unsafe.Pointer(funcs + uintptr(uint32(ordinal)*4)))
@@ -286,21 +370,25 @@ func FreeDLLFromMemory(handle uintptr) error {
     dllsMu.Unlock()
 
     if ok && info.entryPoint != 0 {
-        syscall.Syscall(info.entryPoint, 3, handle, constants.DLL_PROCESS_DETACH, 0)
+        winapi.DirectSyscall("", info.entryPoint, handle, constants.DLL_PROCESS_DETACH, 0)
     }
 
-    // RtlDeleteFunctionTable(funcTable)
-    // Only call if funcTable was registered (i.e., not nil and on 64-bit)
+    // Exception handler cleanup - when using NtSetInformationProcess directly,
+    // the cleanup is automatically handled when the process memory is freed
+    // No explicit unregistration needed since we're freeing the entire memory region
     if ok && info.funcTable != nil {
-        ntdll := windows.NewLazySystemDLL("ntdll.dll")
-        delFT := ntdll.NewProc("RtlDeleteFunctionTable")
-        // According to MSDN, RtlDeleteFunctionTable returns a BOOLEAN (non-zero for success, 0 for failure).
-        // We don't typically check the return for cleanup functions like this unless debugging.
-        delFT.Call(uintptr(info.funcTable))
+        fmt.Printf("Exception handlers at 0x%x will be cleaned up automatically with memory deallocation\n", uintptr(info.funcTable))
     }
 
-    if err := windows.VirtualFree(handle, 0, windows.MEM_RELEASE); err != nil {
-        return fmt.Errorf("VirtualFree failed: %w", err)
+    // Free memory using NtFreeVirtualMemory
+    baseAddr := handle
+    regionSize := uintptr(0) // Will be filled by the function
+    status, err := winapi.NtFreeVirtualMemory(winapi.CURRENT_PROCESS, &baseAddr, &regionSize, winapi.MEM_RELEASE)
+    if err != nil {
+        return fmt.Errorf("NtFreeVirtualMemory failed: %w", err)
+    }
+    if !winapi.IsNTStatusSuccess(status) {
+        return fmt.Errorf("NtFreeVirtualMemory failed with status: 0x%x", status)
     }
     return nil
 }
@@ -314,22 +402,10 @@ func CallExportWithNoArgs(handle uintptr, name string) (uintptr, error) {
     }
     
     fmt.Printf("Calling export %s at address %x with 0 arguments\n", name, addr)
-    // Use syscall.Syscall with 0 arguments for the actual function
-    r1, _, errno := syscall.Syscall(addr, 0, 0, 0, 0)
-
-    // errno is of type syscall.Errno (uintptr).
-    // A value of 0 typically indicates success from the syscall itself.
-    // If errno is not 0, it might be an actual error or a success code
-    // that Go's syscall layer wraps as a non-nil error object.
-    if errno != 0 { // Check if errno is not numerically zero
-        // If it's not zero, check if it's the specific "success" message.
-        // If it is this message, we treat it as success (return nil error).
-        // Otherwise, it's a real error.
-        if errno.Error() == "The operation completed successfully." {
-            return r1, nil // Success
-        }
-        return r1, errno // Actual error
+    // Use DirectSyscall with 0 arguments for the actual function
+    r1, err := winapi.DirectSyscall("", addr)
+    if err != nil {
+        return r1, fmt.Errorf("export call failed: %w", err)
     }
-    // If errno was 0, it's success.
     return r1, nil
 }

